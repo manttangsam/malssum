@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.10 (최신업데이트)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.11 (최신업데이트)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -923,6 +923,24 @@
     let currentSpokenTranscript = '';
     let completedVersesMap = {};
     let activeVerseCheckedIndices = new Set();
+    let activeVerseWordPointer = 0;
+    let verseStartResultIndex = 0;
+    let hardwareMicStream = null;
+
+    async function keepMicHardwareActive() {
+      try {
+        if (!hardwareMicStream && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          hardwareMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+      } catch (e) {}
+    }
+
+    function stopMicHardware() {
+      if (hardwareMicStream) {
+        hardwareMicStream.getTracks().forEach(track => track.stop());
+        hardwareMicStream = null;
+      }
+    }
 
     function getTodayString() {
       const d = new Date();
@@ -1248,6 +1266,8 @@
     function selectVerse(idx) {
       activeVerseIndex = idx;
       activeVerseCheckedIndices.clear();
+      activeVerseWordPointer = 0;
+      verseStartResultIndex = (speechRecognition && speechRecognition.results) ? speechRecognition.results.length : 0;
       currentSpokenTranscript = '';
       saveUserData();
       renderChapter();
@@ -1275,6 +1295,8 @@
         toggleSimulation();
       }
 
+      keepMicHardwareActive();
+
       const btn = document.getElementById('micBtn');
       if (btn && !isListening) {
         btn.style.background = '#d97706';
@@ -1297,6 +1319,8 @@
 
         speechRecognition.onstart = () => {
           isListening = true;
+          activeVerseWordPointer = 0;
+          verseStartResultIndex = 0;
           const micBtn = document.getElementById('micBtn');
           if (micBtn) {
             micBtn.style.background = '#ef4444';
@@ -1323,7 +1347,7 @@
 
         speechRecognition.onend = () => {
           if (isListening) {
-            // SEAMLESS AUTO RESTART: Restart mic immediately in background without flashing UI!
+            // SILENT SEAMLESS RESTART: Re-start recognition without re-initializing hardware mic
             try {
               speechRecognition.start();
             } catch (err) {
@@ -1342,60 +1366,66 @@
         };
 
         speechRecognition.onresult = (e) => {
-          // INSTANT 0ms REAL-TIME SPEED MATCHING: Process speech results as fast as the reader speaks!
-          const startIndex = Math.max(0, e.results.length - 3);
+          const verses = getVerses();
+          if (activeVerseIndex >= verses.length) return;
+
+          const activeText = verses[activeVerseIndex];
+          const cleanActiveTarget = activeText.replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
+          const activeTargetWords = cleanActiveTarget.split(/\s+/).filter(Boolean);
+          const totalWords = activeTargetWords.length;
+          if (totalWords === 0) return;
+
+          // Collect ONLY transcript results belonging to the current active verse!
           let recentSpoken = '';
-          for (let i = startIndex; i < e.results.length; ++i) {
+          const startIdx = Math.max(verseStartResultIndex, e.results.length - 4);
+          for (let i = startIdx; i < e.results.length; ++i) {
             recentSpoken += ' ' + e.results[i][0].transcript;
           }
           currentSpokenTranscript = recentSpoken.trim();
           if (!currentSpokenTranscript) return;
 
-          const verses = getVerses();
-          if (activeVerseIndex >= verses.length) return;
-
           const cleanSpoken = currentSpokenTranscript.replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
           const spokenWords = cleanSpoken.split(/\s+/).filter(Boolean);
           if (spokenWords.length === 0) return;
 
-          function isWordMatchedInSpoken(tw, spokenWords) {
+          // Safe Korean Word Match (requires minimum 2-character stem, NO single-syllable false positives!)
+          function isKoreanWordMatch(tw, sw) {
             const twClean = tw.replace(/[^\wㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-            if (!twClean) return false;
+            const swClean = sw.replace(/[^\wㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
+            if (!twClean || !swClean) return false;
 
-            // Flexible matching for Korean speech (handles stem / prefix / partial matches)
-            const twStem = twClean.length >= 3 ? twClean.slice(0, 2) : twClean.slice(0, 1);
-            return spokenWords.some(sw => {
-              const swClean = sw.replace(/[^\wㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-              if (!swClean) return false;
-              return swClean.includes(twStem) || twClean.includes(swClean);
-            });
+            if (twClean === swClean) return true;
+
+            if (twClean.length >= 2 && swClean.length >= 2) {
+              const twStem = twClean.length >= 3 ? twClean.slice(0, 3) : twClean;
+              const swStem = swClean.length >= 3 ? swClean.slice(0, 3) : swClean;
+              if (twClean.startsWith(swStem) || swClean.startsWith(twStem)) return true;
+            }
+            return false;
           }
 
-          // 1) Match spoken words against current active verse
-          const activeText = verses[activeVerseIndex];
-          const cleanActiveTarget = activeText.replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-          const activeTargetWords = cleanActiveTarget.split(/\s+/).filter(Boolean);
-
-          activeTargetWords.forEach((tw, idx) => {
-            if (isWordMatchedInSpoken(tw, spokenWords)) {
-              activeVerseCheckedIndices.add(idx);
+          // SEQUENTIAL WORD MATCHING: Words MUST be read in order from left to right!
+          for (let sIdx = 0; sIdx < spokenWords.length; sIdx++) {
+            const sw = spokenWords[sIdx];
+            for (let lookahead = 0; lookahead <= 2; lookahead++) {
+              const targetIdx = activeVerseWordPointer + lookahead;
+              if (targetIdx < totalWords) {
+                if (isKoreanWordMatch(activeTargetWords[targetIdx], sw)) {
+                  for (let i = activeVerseWordPointer; i <= targetIdx; i++) {
+                    activeVerseCheckedIndices.add(i);
+                  }
+                  activeVerseWordPointer = targetIdx + 1;
+                  break;
+                }
+              }
             }
-          });
+          }
 
-          const totalWords = activeTargetWords.length;
-          const matchedCount = activeVerseCheckedIndices.size;
-          const matchRatio = totalWords > 0 ? matchedCount / totalWords : 0;
+          // STRICT VERSE COMPLETION: Reader must sequentially reach the end of the verse and complete 65%+ words!
+          const hasReachedEnd = activeVerseWordPointer >= Math.max(1, totalWords - 1);
+          const matchRatio = totalWords > 0 ? (activeVerseCheckedIndices.size / totalWords) : 0;
 
-          const lastWordIndex = totalWords - 1;
-          const secondLastWordIndex = Math.max(0, totalWords - 2);
-          const hasReadEnd = activeVerseCheckedIndices.has(lastWordIndex) || activeVerseCheckedIndices.has(secondLastWordIndex);
-
-          // SAFE & ACCURATE VERSE COMPLETION:
-          // Must match at least 55%+ of words AND have read towards the end of the verse (or 75%+ overall match)!
-          // Prevents erratic verse skipping from ambient 2-word noise!
-          const isActiveCompleted = (matchRatio >= 0.75) || (hasReadEnd && matchRatio >= 0.55);
-
-          if (isActiveCompleted) {
+          if (hasReachedEnd && matchRatio >= 0.65) {
             currentSpokenTranscript = '';
             const key = `${currentBookId}_${currentChapter}`;
             matchedVerses.add(activeVerseIndex);
@@ -1405,7 +1435,9 @@
 
             if (activeVerseIndex < verses.length - 1) {
               activeVerseIndex++;
+              activeVerseWordPointer = 0;
               activeVerseCheckedIndices.clear();
+              verseStartResultIndex = e.results.length; // Lock out previous verse speech!
             }
             saveUserData();
             renderChapter();
@@ -1420,6 +1452,7 @@
         console.error('startMic error:', e);
         isListening = false;
         isAutoRestarting = false;
+        stopMicHardware();
         const micBtn = document.getElementById('micBtn');
         if (micBtn) {
           micBtn.style.background = 'var(--forest)';
@@ -1432,6 +1465,7 @@
     function stopMic() {
       isAutoRestarting = false;
       isListening = false;
+      stopMicHardware();
       if (speechRecognition) {
         try {
           speechRecognition.onend = null;
@@ -1669,7 +1703,7 @@
     }
 
     // --- APP VERSION & HARD RELOAD CACHE BUSTER ---
-    const CURRENT_APP_VERSION = '1.0.10';
+    const CURRENT_APP_VERSION = '1.0.11';
 
     function forceHardReload() {
       if ('caches' in window) {
