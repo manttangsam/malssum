@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>말씀소리 | 소리 내어 읽는 개역개정 성경 통독</title>
   <meta name="description" content="성경 본문을 읽으면 실제 음성을 인식하여 읽는 단어와 구절이 실시간으로 하이라이트 체크되는 개역개정 성경 통독 앱">
 
@@ -377,7 +380,10 @@
       <div class="brand">
         <div class="brand-mark">📖</div>
         <div>
-          <strong>말씀소리</strong>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <strong style="margin: 0;">말씀소리</strong>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.8 (최신업데이트)</span>
+          </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
       </div>
@@ -1594,12 +1600,30 @@
       }
     }
 
+    // --- APP VERSION & CACHE MANAGEMENT ---
+    const CURRENT_APP_VERSION = '1.0.8';
+    (function checkVersionAndCache() {
+      const cachedVer = localStorage.getItem('malssum_version');
+      if (cachedVer !== CURRENT_APP_VERSION) {
+        localStorage.setItem('malssum_version', CURRENT_APP_VERSION);
+        if ('caches' in window) {
+          caches.keys().then(names => {
+            for (let name of names) caches.delete(name);
+          });
+        }
+      }
+    })();
+
     // --- SERVICE WORKER REGISTRATION (OFFLINE & NATIVE APP SHELL) ---
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         const swCode = `
           self.addEventListener('install', (e) => self.skipWaiting());
-          self.addEventListener('activate', (e) => self.clients.claim());
+          self.addEventListener('activate', (e) => {
+            e.waitUntil(
+              caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => self.clients.claim())
+            );
+          });
           self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
         `;
         const blob = new Blob([swCode], { type: 'application/javascript' });
