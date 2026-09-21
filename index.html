@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.2 (실시간 인식 문구 표시)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.3 (자동 프롬프터 연속 스크롤)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -1154,7 +1154,7 @@
       return `<span>${text}</span>`;
     }
 
-    function renderChapter() {
+    function renderChapter(skipScroll = false) {
       const book = BIBLE_BOOKS.find(b => b.id === currentBookId);
       const chapterMarkEl = document.getElementById('chapterMark');
       if (chapterMarkEl) {
@@ -1189,9 +1189,9 @@
               ${isActive ? `
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; gap: 10px;">
                   <div style="height: 5px; background: rgba(49,95,74,0.15); border-radius: 4px; overflow: hidden; flex: 1;">
-                    <div style="height: 100%; width: ${activeVerseProgressPercent}%; background: ${isVoiceSoundDetected ? '#ef4444' : 'var(--forest)'}; transition: width 0.3s ease, background-color 0.3s ease; border-radius: 4px;"></div>
+                    <div id="activeProgressBarFill" style="height: 100%; width: ${activeVerseProgressPercent}%; background: ${isVoiceSoundDetected ? '#ef4444' : 'var(--forest)'}; transition: width 0.1s linear, background-color 0.3s ease; border-radius: 4px;"></div>
                   </div>
-                  <span style="font-size: 11px; font-weight: 800; color: ${isVoiceSoundDetected ? '#ef4444' : 'var(--sub)'}; white-space: nowrap;">
+                  <span id="activeVoiceStatusText" style="font-size: 11px; font-weight: 800; color: ${isVoiceSoundDetected ? '#ef4444' : 'var(--sub)'}; white-space: nowrap;">
                     ${isVoiceSoundDetected ? '🗣️ 목소리 감지 중' : '▶️ 낭독 진행'}
                   </span>
                 </div>
@@ -1220,12 +1220,14 @@
         `;
       }
 
-      setTimeout(() => {
-        const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
-        if (activeEl) {
-          activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }, 100);
+      if (!skipScroll) {
+        setTimeout(() => {
+          const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
+          if (activeEl) {
+            activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+      }
 
       const dockWave = document.getElementById('dockAudioWave');
       const srStatus = document.getElementById('srStatus');
@@ -1403,7 +1405,7 @@
 
       const dataArray = new Uint8Array(audioAnalyser ? audioAnalyser.frequencyBinCount : 128);
 
-      // Auto Teleprompter Scrolling Loop (runs every 100ms - NEVER FREEZES!)
+      // Auto Teleprompter Scrolling Loop (runs every 50ms - smooth continuous auto-scrolling)
       if (vadTimer) clearInterval(vadTimer);
       vadTimer = setInterval(() => {
         if (!isListening) return;
@@ -1450,10 +1452,30 @@
           });
         }
 
-        // CONTINUOUS UNINTERRUPTED SCROLLING (1.2x boost when voice is actively detected!)
-        const boost = isVoiceSoundDetected ? 1.2 : 1.0;
-        activeVerseProgressPercent += (2.2 * readingSpeedMultiplier * boost);
+        // Calculate progress percentage and scroll delta per 50ms tick
+        const boost = isVoiceSoundDetected ? 1.25 : 1.0;
+        const deltaPercent = (0.65 * readingSpeedMultiplier * boost);
+        activeVerseProgressPercent += deltaPercent;
 
+        // 1. Update active verse progress bar width & status text in DOM directly (no re-render!)
+        const fillEl = document.getElementById('activeProgressBarFill');
+        if (fillEl) {
+          fillEl.style.width = `${Math.min(100, activeVerseProgressPercent)}%`;
+          fillEl.style.backgroundColor = isVoiceSoundDetected ? '#ef4444' : 'var(--forest)';
+        }
+        const statusTxtEl = document.getElementById('activeVoiceStatusText');
+        if (statusTxtEl) {
+          statusTxtEl.innerText = isVoiceSoundDetected ? '🗣️ 목소리 감지 중' : '▶️ 낭독 진행';
+          statusTxtEl.style.color = isVoiceSoundDetected ? '#ef4444' : 'var(--sub)';
+        }
+
+        // 2. Continuous smooth teleprompter pixel scroll (floats scripture verses UP!)
+        const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
+        const verseHeight = activeEl ? (activeEl.offsetHeight + 28) : 120;
+        const scrollDelta = (verseHeight / 100) * deltaPercent;
+        window.scrollBy(0, scrollDelta);
+
+        // 3. Verse completion trigger
         if (activeVerseProgressPercent >= 100) {
           const verses = getVerses();
           const key = `${currentBookId}_${currentChapter}`;
@@ -1465,20 +1487,15 @@
           if (activeVerseIndex < verses.length - 1) {
             activeVerseIndex++;
             activeVerseProgressPercent = 0;
-            setTimeout(() => {
-              const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
-              if (activeEl) {
-                activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              }
-            }, 50);
+            renderChapter(true); // skipScroll = true to keep smooth scrolling continuous
           } else {
             stopMic();
             alert('🎉 축하합니다! 이번 장 낭독을 모두 완료하셨습니다!');
+            renderChapter(true);
           }
           saveUserData();
         }
-        renderChapter();
-      }, 100);
+      }, 50);
 
       renderChapter();
     }
