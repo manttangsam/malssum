@@ -1,0 +1,85 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif+KR:wght@400;500;600;700;900&family=Outfit:wght@500;600;700;800&display=swap');
+
+:root {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Theme variables */
+body.theme-sepia {
+  --bg-primary: #fbf7ee;
+  --text-primary: #3d3127;
+  --header-bg: rgba(251, 247, 238, 0.85);
+  --border-color: rgba(184, 158, 126, 0.25);
+  --floating-bg: rgba(245, 237, 222, 0.85);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+body.theme-dark {
+  --bg-primary: #0f172a;
+  --text-primary: #f8fafc;
+  --header-bg: rgba(15, 23, 42, 0.85);
+  --border-color: rgba(255, 255, 255, 0.1);
+  --floating-bg: rgba(30, 41, 59, 0.85);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+body.theme-light {
+  --bg-primary: #ffffff;
+  --text-primary: #0f172a;
+  --header-bg: rgba(255, 255, 255, 0.85);
+  --border-color: rgba(0, 0, 0, 0.08);
+  --floating-bg: rgba(248, 250, 252, 0.85);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Custom UI Utils */
+.bg-custom {
+  background-color: var(--bg-primary);
+}
+
+.header-bg {
+  background-color: var(--header-bg);
+}
+
+.floating-bar-bg {
+  background-color: var(--floating-bg);
+}
+
+.border-custom {
+  border-color: var(--border-color);
+}
+
+/* Custom Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.4);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.7);
+}
