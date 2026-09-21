@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.12 (최신업데이트)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.13 (최신업데이트)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -922,8 +922,7 @@
     let currentPlanKey = '1year';
     let currentSpokenTranscript = '';
     let completedVersesMap = {};
-    let activeVerseCheckedIndices = new Set();
-    let activeVerseWordPointer = 0;
+    let activeVerseProgressPercent = 0;
     let verseStartResultIndex = 0;
     let lastVerseTransitionTimestamp = 0;
     let hardwareMicStream = null;
@@ -1120,18 +1119,9 @@
 
     function renderWordByWordText(text, verseIdx, isCompleted) {
       if (isCompleted) {
-        return `<span style="color: var(--forest); font-weight: 600;">${text}</span>`;
+        return `<span style="color: var(--forest); font-weight: 600;">✓ ${text}</span>`;
       }
-      if (verseIdx !== activeVerseIndex) {
-        return `<span style="color: inherit;">${text}</span>`;
-      }
-      const words = text.split(' ');
-      return words.map((w, idx) => {
-        if (activeVerseCheckedIndices.has(idx)) {
-          return `<span class="word-checked">${w}</span>`;
-        }
-        return `<span>${w}</span>`;
-      }).join(' ');
+      return `<span>${text}</span>`;
     }
 
     function renderChapter() {
@@ -1143,7 +1133,7 @@
       const verses = getVerses();
       const verseSubEl = document.getElementById('verseCountSub');
       if (verseSubEl) {
-        verseSubEl.innerText = `${book.name} ${currentChapter}장 (총 ${verses.length}절) · 음성 확인 통독`;
+        verseSubEl.innerText = `${book.name} ${currentChapter}장 (총 ${verses.length}절) · 음성 분량 실시간 통독`;
       }
 
       const key = `${currentBookId}_${currentChapter}`;
@@ -1163,9 +1153,14 @@
           else if (isActive) verseClass = 'verse current';
 
           return `
-            <div id="verse-card-${idx}" onclick="selectVerse(${idx})" class="${verseClass}" style="font-size: ${fontSize}px;">
+            <div id="verse-card-${idx}" onclick="selectVerse(${idx})" class="${verseClass}" style="font-size: ${fontSize}px; position: relative;">
               <span class="verse-num">${verseNo}</span>
               ${renderedTextHtml}
+              ${isActive ? `
+                <div style="margin-top: 10px; height: 5px; background: rgba(49,95,74,0.15); border-radius: 4px; overflow: hidden;">
+                  <div style="height: 100%; width: ${activeVerseProgressPercent}%; background: var(--forest); transition: width 0.3s ease; border-radius: 4px;"></div>
+                </div>
+              ` : ''}
             </div>
           `;
         }).join('');
@@ -1266,8 +1261,7 @@
 
     function selectVerse(idx) {
       activeVerseIndex = idx;
-      activeVerseCheckedIndices.clear();
-      activeVerseWordPointer = 0;
+      activeVerseProgressPercent = 0;
       verseStartResultIndex = (speechRecognition && speechRecognition.results) ? speechRecognition.results.length : 0;
       lastVerseTransitionTimestamp = Date.now();
       currentSpokenTranscript = '';
@@ -1378,10 +1372,9 @@
           if (activeVerseIndex >= verses.length) return;
 
           const activeText = verses[activeVerseIndex];
-          const cleanActiveTarget = activeText.replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-          const activeTargetWords = cleanActiveTarget.split(/\s+/).filter(Boolean);
-          const totalWords = activeTargetWords.length;
-          if (totalWords === 0) return;
+          const targetKoreanLetters = activeText.replace(/[^ㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
+          const targetLen = targetKoreanLetters.length;
+          if (targetLen === 0) return;
 
           // Collect ONLY transcript results belonging to the current active verse!
           let recentSpoken = '';
@@ -1392,50 +1385,18 @@
           currentSpokenTranscript = recentSpoken.trim();
           if (!currentSpokenTranscript) return;
 
-          const cleanSpoken = currentSpokenTranscript.replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-          const spokenWords = cleanSpoken.split(/\s+/).filter(Boolean);
-          if (spokenWords.length === 0) return;
+          const spokenKoreanLetters = currentSpokenTranscript.replace(/[^ㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
+          const spokenLen = spokenKoreanLetters.length;
 
-          // Safe Korean Word Match (requires minimum 2-character stem, NO single-syllable false positives!)
-          function isKoreanWordMatch(tw, sw) {
-            const twClean = tw.replace(/[^\wㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-            const swClean = sw.replace(/[^\wㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-            if (!twClean || !swClean) return false;
+          // Smooth Progress Percentage (0% to 100% based on spoken syllable count)
+          const rawRatio = spokenLen / targetLen;
+          activeVerseProgressPercent = Math.min(100, Math.round(rawRatio * 100));
 
-            if (twClean === swClean) return true;
-
-            if (twClean.length >= 2 && swClean.length >= 2) {
-              const twStem = twClean.length >= 3 ? twClean.slice(0, 3) : twClean;
-              const swStem = swClean.length >= 3 ? swClean.slice(0, 3) : swClean;
-              if (twClean.startsWith(swStem) || swClean.startsWith(twStem)) return true;
-            }
-            return false;
-          }
-
-          // SEQUENTIAL WORD MATCHING: Words MUST be read in order from left to right!
-          for (let sIdx = 0; sIdx < spokenWords.length; sIdx++) {
-            const sw = spokenWords[sIdx];
-            for (let lookahead = 0; lookahead <= 2; lookahead++) {
-              const targetIdx = activeVerseWordPointer + lookahead;
-              if (targetIdx < totalWords) {
-                if (isKoreanWordMatch(activeTargetWords[targetIdx], sw)) {
-                  for (let i = activeVerseWordPointer; i <= targetIdx; i++) {
-                    activeVerseCheckedIndices.add(i);
-                  }
-                  activeVerseWordPointer = targetIdx + 1;
-                  break;
-                }
-              }
-            }
-          }
-
-          // STRICT VERSE COMPLETION: Reader must sequentially reach the end of the verse and complete 65%+ words!
-          const hasReachedEnd = activeVerseWordPointer >= Math.max(1, totalWords - 1);
-          const matchRatio = totalWords > 0 ? (activeVerseCheckedIndices.size / totalWords) : 0;
           const now = Date.now();
 
-          // COOLDOWN: Require at least 700ms between verse completions to prevent rapid multi-verse chain reaction skipping!
-          if (hasReachedEnd && matchRatio >= 0.65 && (now - lastVerseTransitionTimestamp >= 700)) {
+          // VERSE COMPLETION RULE (Character-Count Based Flow):
+          // Completes when spoken syllable count reaches ~80% of verse length (with 700ms cooldown)
+          if (rawRatio >= 0.80 && (now - lastVerseTransitionTimestamp >= 700)) {
             currentSpokenTranscript = '';
             const key = `${currentBookId}_${currentChapter}`;
             matchedVerses.add(activeVerseIndex);
@@ -1445,10 +1406,9 @@
 
             if (activeVerseIndex < verses.length - 1) {
               activeVerseIndex++;
-              activeVerseWordPointer = 0;
-              activeVerseCheckedIndices.clear();
+              activeVerseProgressPercent = 0;
               verseStartResultIndex = e.results.length; // Lock out previous verse speech!
-              lastVerseTransitionTimestamp = Date.now(); // Activate cooldown!
+              lastVerseTransitionTimestamp = Date.now(); // Activate transition cooldown!
 
               setTimeout(() => {
                 const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
@@ -1721,7 +1681,7 @@
     }
 
     // --- APP VERSION & HARD RELOAD CACHE BUSTER ---
-    const CURRENT_APP_VERSION = '1.0.12';
+    const CURRENT_APP_VERSION = '1.0.13';
 
     function forceHardReload() {
       if ('caches' in window) {
