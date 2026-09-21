@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.11 (최신업데이트)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.12 (최신업데이트)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -925,6 +925,7 @@
     let activeVerseCheckedIndices = new Set();
     let activeVerseWordPointer = 0;
     let verseStartResultIndex = 0;
+    let lastVerseTransitionTimestamp = 0;
     let hardwareMicStream = null;
 
     async function keepMicHardwareActive() {
@@ -1268,9 +1269,16 @@
       activeVerseCheckedIndices.clear();
       activeVerseWordPointer = 0;
       verseStartResultIndex = (speechRecognition && speechRecognition.results) ? speechRecognition.results.length : 0;
+      lastVerseTransitionTimestamp = Date.now();
       currentSpokenTranscript = '';
       saveUserData();
       renderChapter();
+      setTimeout(() => {
+        const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
+        if (activeEl) {
+          activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 50);
     }
 
     function toggleMic() {
@@ -1424,8 +1432,10 @@
           // STRICT VERSE COMPLETION: Reader must sequentially reach the end of the verse and complete 65%+ words!
           const hasReachedEnd = activeVerseWordPointer >= Math.max(1, totalWords - 1);
           const matchRatio = totalWords > 0 ? (activeVerseCheckedIndices.size / totalWords) : 0;
+          const now = Date.now();
 
-          if (hasReachedEnd && matchRatio >= 0.65) {
+          // COOLDOWN: Require at least 700ms between verse completions to prevent rapid multi-verse chain reaction skipping!
+          if (hasReachedEnd && matchRatio >= 0.65 && (now - lastVerseTransitionTimestamp >= 700)) {
             currentSpokenTranscript = '';
             const key = `${currentBookId}_${currentChapter}`;
             matchedVerses.add(activeVerseIndex);
@@ -1438,6 +1448,14 @@
               activeVerseWordPointer = 0;
               activeVerseCheckedIndices.clear();
               verseStartResultIndex = e.results.length; // Lock out previous verse speech!
+              lastVerseTransitionTimestamp = Date.now(); // Activate cooldown!
+
+              setTimeout(() => {
+                const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
+                if (activeEl) {
+                  activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }, 50);
             }
             saveUserData();
             renderChapter();
@@ -1703,7 +1721,7 @@
     }
 
     // --- APP VERSION & HARD RELOAD CACHE BUSTER ---
-    const CURRENT_APP_VERSION = '1.0.11';
+    const CURRENT_APP_VERSION = '1.0.12';
 
     function forceHardReload() {
       if ('caches' in window) {
