@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.3 (자동 프롬프터 연속 스크롤)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.4 (실시간 음성-구절 동기화)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -1323,6 +1323,58 @@
     let isAutoRestarting = false;
     let lastVerseJumpTime = 0;
 
+    function checkSpeechVerseMatch(transcript) {
+      if (!isListening || !transcript) return;
+      const verses = getVerses();
+      const cleanTranscript = transcript.replace(/[^가-힣a-zA-Z0-9]/g, '');
+      if (cleanTranscript.length < 3) return;
+
+      const now = Date.now();
+      if (now - lastVerseTransitionTimestamp < 1000) return;
+
+      // Check next verse (+1) and next-next verse (+2) strictly to prevent distant skipping
+      for (let offset = 1; offset <= 2; offset++) {
+        const targetIdx = activeVerseIndex + offset;
+        if (targetIdx >= verses.length) break;
+
+        const verseText = verses[targetIdx];
+        const words = verseText.split(/\s+/).map(w => w.replace(/[^가-힣a-zA-Z0-9]/g, '')).filter(w => w.length >= 2);
+        
+        let matchCount = 0;
+        for (const word of words) {
+          if (cleanTranscript.includes(word)) {
+            matchCount++;
+          }
+        }
+
+        const minRequiredMatches = offset === 1 
+          ? Math.min(2, Math.max(1, Math.ceil(words.length * 0.2))) 
+          : Math.min(3, Math.max(2, Math.ceil(words.length * 0.35)));
+
+        if (matchCount >= minRequiredMatches) {
+          const key = `${currentBookId}_${currentChapter}`;
+          for (let i = activeVerseIndex; i < targetIdx; i++) {
+            matchedVerses.add(i);
+            versesReadToday++;
+          }
+          completedVersesMap[key] = Array.from(matchedVerses);
+          updatePlanUI();
+
+          activeVerseIndex = targetIdx;
+          activeVerseProgressPercent = 0;
+          lastVerseTransitionTimestamp = Date.now();
+          saveUserData();
+
+          renderChapter(true);
+          const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
+          if (activeEl) {
+            activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          break;
+        }
+      }
+    }
+
     async function startMic() {
       if (isListening) return;
 
@@ -1389,6 +1441,7 @@
               if (srSub) {
                 srSub.innerHTML = `🗣️ 인식된 말씀: <strong style="color: #ef4444;">"${currentSpokenTranscript.slice(-32)}"</strong>`;
               }
+              checkSpeechVerseMatch(currentSpokenTranscript);
             }
           };
 
