@@ -1363,38 +1363,6 @@
             return;
           }
 
-          // 2) NEXT-VERSE FLOW DETECTOR: If user started reading the next verse out loud, follow along!
-          if (activeVerseIndex < verses.length - 1) {
-            const nextText = verses[activeVerseIndex + 1];
-            const cleanNextTarget = nextText.replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-            const nextTargetWords = cleanNextTarget.split(/\s+/).filter(Boolean);
-
-            let nextMatchedCount = 0;
-            const nextMatchedIndices = new Set();
-            nextTargetWords.forEach((tw, idx) => {
-              if (isWordMatchedInSpoken(tw, spokenWords)) {
-                nextMatchedCount++;
-                nextMatchedIndices.add(idx);
-              }
-            });
-
-            if (nextMatchedCount >= 2) {
-              lastVerseJumpTime = now;
-              currentSpokenTranscript = '';
-              const key = `${currentBookId}_${currentChapter}`;
-              matchedVerses.add(activeVerseIndex); // Mark current verse complete
-              completedVersesMap[key] = Array.from(matchedVerses);
-              versesReadToday++;
-              updatePlanUI();
-
-              activeVerseIndex++; // Advance active verse smoothly to next verse!
-              activeVerseCheckedIndices = nextMatchedIndices;
-              saveUserData();
-              renderChapter();
-              return;
-            }
-          }
-
           renderChapter();
         };
 
