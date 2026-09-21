@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.1 (연속 자동 프롬프터)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.2 (실시간 인식 문구 표시)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -1187,8 +1187,13 @@
               <span class="verse-num">${verseNo}</span>
               ${renderedTextHtml}
               ${isActive ? `
-                <div style="margin-top: 10px; height: 5px; background: rgba(49,95,74,0.15); border-radius: 4px; overflow: hidden;">
-                  <div style="height: 100%; width: ${activeVerseProgressPercent}%; background: var(--forest); transition: width 0.3s ease; border-radius: 4px;"></div>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; gap: 10px;">
+                  <div style="height: 5px; background: rgba(49,95,74,0.15); border-radius: 4px; overflow: hidden; flex: 1;">
+                    <div style="height: 100%; width: ${activeVerseProgressPercent}%; background: ${isVoiceSoundDetected ? '#ef4444' : 'var(--forest)'}; transition: width 0.3s ease, background-color 0.3s ease; border-radius: 4px;"></div>
+                  </div>
+                  <span style="font-size: 11px; font-weight: 800; color: ${isVoiceSoundDetected ? '#ef4444' : 'var(--sub)'}; white-space: nowrap;">
+                    ${isVoiceSoundDetected ? '🗣️ 목소리 감지 중' : '▶️ 낭독 진행'}
+                  </span>
                 </div>
               ` : ''}
             </div>
@@ -1358,6 +1363,44 @@
         console.warn('AudioContext VAD setup warning:', e);
       }
 
+      // Start Speech Recognition in parallel FOR LIVE TRANSCRIPT DISPLAY ONLY (gives real-time voice feedback)
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRec) {
+        try {
+          if (speechRecognition) {
+            try { speechRecognition.onend = null; speechRecognition.stop(); } catch(e) {}
+          }
+          speechRecognition = new SpeechRec();
+          speechRecognition.continuous = true;
+          speechRecognition.interimResults = true;
+          speechRecognition.lang = 'ko-KR';
+
+          speechRecognition.onresult = (e) => {
+            let recent = '';
+            const startIdx = Math.max(0, e.results.length - 2);
+            for (let i = startIdx; i < e.results.length; ++i) {
+              recent += ' ' + e.results[i][0].transcript;
+            }
+            currentSpokenTranscript = recent.trim();
+            if (currentSpokenTranscript) {
+              const srSub = document.getElementById('srSub');
+              if (srSub) {
+                srSub.innerHTML = `🗣️ 인식된 말씀: <strong style="color: #ef4444;">"${currentSpokenTranscript.slice(-32)}"</strong>`;
+              }
+            }
+          };
+
+          speechRecognition.onend = () => {
+            if (isListening && speechRecognition) {
+              try { speechRecognition.start(); } catch(e) {}
+            }
+          };
+
+          speechRecognition.onerror = () => {};
+          try { speechRecognition.start(); } catch(e) {}
+        } catch(e) {}
+      }
+
       const dataArray = new Uint8Array(audioAnalyser ? audioAnalyser.frequencyBinCount : 128);
 
       // Auto Teleprompter Scrolling Loop (runs every 100ms - NEVER FREEZES!)
@@ -1382,15 +1425,29 @@
         const dockWave = document.getElementById('dockAudioWave');
         const srStatus = document.getElementById('srStatus');
         const srSub = document.getElementById('srSub');
+        const waveBars = dockWave ? dockWave.querySelectorAll('i') : [];
 
         if (isVoiceSoundDetected) {
           if (dockWave) dockWave.classList.add('active');
-          if (srStatus) srStatus.innerText = `🗣️ 목소리 감지 중 (${getSpeedLabel(readingSpeedMultiplier)})`;
-          if (srSub) srSub.innerText = '소리 내어 읽으시면 구절이 부드럽게 위로 따라 올라갑니다';
+          if (srStatus) srStatus.innerHTML = `<span style="color:#ef4444; font-weight:900;">🗣️ 목소리 감지 중 (${getSpeedLabel(readingSpeedMultiplier)})</span>`;
+          if (!currentSpokenTranscript && srSub) {
+            srSub.innerText = '✨ 낭독하시는 목소리가 실시간 인식되고 있습니다';
+          }
+          waveBars.forEach((bar, idx) => {
+            const h = Math.min(26, Math.max(8, Math.round((avgVal * (idx + 1.8)) * 1.5)));
+            bar.style.height = `${h}px`;
+            bar.style.backgroundColor = '#ef4444';
+          });
         } else {
           if (dockWave) dockWave.classList.remove('active');
           if (srStatus) srStatus.innerText = `▶️ 자동 프롬프터 진행 중 (${getSpeedLabel(readingSpeedMultiplier)})`;
-          if (srSub) srSub.innerText = '성경 말씀을 큰 목소리로 낭독해 보세요';
+          if (!currentSpokenTranscript && srSub) {
+            srSub.innerText = '🎙️ 소리 내어 성경을 읽으시면 목소리가 실시간 감지됩니다';
+          }
+          waveBars.forEach(bar => {
+            bar.style.height = '8px';
+            bar.style.backgroundColor = 'var(--forest)';
+          });
         }
 
         // CONTINUOUS UNINTERRUPTED SCROLLING (1.2x boost when voice is actively detected!)
@@ -1430,6 +1487,9 @@
       isListening = false;
       if (vadTimer) clearInterval(vadTimer);
       vadTimer = null;
+      if (speechRecognition) {
+        try { speechRecognition.onend = null; speechRecognition.stop(); } catch(e) {}
+      }
       if (audioSource) try { audioSource.disconnect(); } catch(e) {}
       if (audioContext) try { audioContext.close(); } catch(e) {}
       stopMicHardware();
@@ -1437,6 +1497,7 @@
       audioSource = null;
       audioAnalyser = null;
       isVoiceSoundDetected = false;
+      currentSpokenTranscript = '';
 
       const micBtn = document.getElementById('micBtn');
       if (micBtn) {
