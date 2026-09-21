@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v1.0.13 (최신업데이트)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.0 (음성감지 자동읽기)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -534,6 +534,12 @@
         </div>
       </div>
       <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;">
+        <select id="speedSelect" onchange="setReadingSpeed(this.value)" class="select-pill" style="min-height: 44px; padding: 0 10px; font-size: 13px; border-radius: 12px; font-weight: 800; background: var(--sheet); color: var(--ink); border: 2px solid var(--forest);" title="낭독 자동 진행 속도 선택">
+          <option value="0.7">🐢 천천히 (0.7x)</option>
+          <option value="1.0" selected>🚶 보통 (1.0x)</option>
+          <option value="1.3">🏃 빠르게 (1.3x)</option>
+          <option value="1.6">⚡ 매우빠르게 (1.6x)</option>
+        </select>
         <button class="mic-btn" id="micBtn" onclick="toggleMic()" type="button">
           🎤 <span>낭독 시작</span>
         </button>
@@ -921,11 +927,31 @@
     let versesReadToday = 0;
     let currentPlanKey = '1year';
     let currentSpokenTranscript = '';
-    let completedVersesMap = {};
-    let activeVerseProgressPercent = 0;
-    let verseStartResultIndex = 0;
-    let lastVerseTransitionTimestamp = 0;
+    let audioContext = null;
+    let audioAnalyser = null;
+    let audioSource = null;
+    let vadTimer = null;
+    let isVoiceSoundDetected = false;
+    let readingSpeedMultiplier = 1.0;
     let hardwareMicStream = null;
+
+    function setReadingSpeed(spd) {
+      readingSpeedMultiplier = parseFloat(spd);
+      saveUserData();
+      const speedSel = document.getElementById('speedSelect');
+      if (speedSel) speedSel.value = spd;
+      const srSub = document.getElementById('srSub');
+      if (srSub && isListening) {
+        srSub.innerText = `낭독 속도: ${getSpeedLabel(readingSpeedMultiplier)} · 소리 내어 읽으시면 진행됩니다`;
+      }
+    }
+
+    function getSpeedLabel(spd) {
+      if (spd <= 0.7) return '🐢 천천히';
+      if (spd >= 1.5) return '⚡ 매우빠르게';
+      if (spd >= 1.2) return '🏃 빠르게';
+      return '🚶 보통';
+    }
 
     async function keepMicHardwareActive() {
       try {
@@ -958,6 +984,7 @@
           currentPlanKey = data.currentPlanKey || '1year';
           fontSize = data.fontSize || 26;
           completedVersesMap = data.completedVerses || {};
+          readingSpeedMultiplier = data.readingSpeedMultiplier || 1.0;
 
           // AUTO-RESUME POSITION: If active verse was already completed, auto-advance to first unread verse!
           const key = `${currentBookId}_${currentChapter}`;
@@ -998,6 +1025,8 @@
       document.getElementById('streakDays').innerText = streakCount;
       const planSel = document.getElementById('planSelect');
       if (planSel) planSel.value = currentPlanKey;
+      const speedSel = document.getElementById('speedSelect');
+      if (speedSel) speedSel.value = readingSpeedMultiplier.toString();
     }
 
     function saveUserData() {
@@ -1012,7 +1041,8 @@
           lastReadDate: todayStr,
           currentPlanKey: currentPlanKey,
           fontSize: fontSize,
-          completedVerses: completedVersesMap
+          completedVerses: completedVersesMap,
+          readingSpeedMultiplier: readingSpeedMultiplier
         };
         localStorage.setItem('malssum_reading_data', JSON.stringify(data));
       } catch (e) {
@@ -1286,10 +1316,20 @@
     let isAutoRestarting = false;
     let lastVerseJumpTime = 0;
 
-    function startMic() {
-      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRec) {
-        alert('이 브라우저는 음성 인식을 지원하지 않습니다.\nGoogle Chrome 또는 Microsoft Edge 브라우저를 권장합니다.');
+    async function startMic() {
+      if (isListening) return;
+
+      try {
+        if (!hardwareMicStream && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          hardwareMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+      } catch (err) {
+        openMicGuideModal();
+        return;
+      }
+
+      if (!hardwareMicStream) {
+        openMicGuideModal();
         return;
       }
 
@@ -1297,107 +1337,58 @@
         toggleSimulation();
       }
 
-      keepMicHardwareActive();
-
-      const btn = document.getElementById('micBtn');
-      if (btn && !isListening) {
-        btn.style.background = '#d97706';
-        btn.innerHTML = '⏳ <span>마이크 켜는 중...</span>';
+      isListening = true;
+      const micBtn = document.getElementById('micBtn');
+      if (micBtn) {
+        micBtn.style.background = '#ef4444';
+        micBtn.innerHTML = '🛑 <span>낭독 멈춤</span>';
       }
 
-      if (speechRecognition) {
-        try {
-          speechRecognition.onend = null;
-          speechRecognition.onerror = null;
-          speechRecognition.stop();
-        } catch (e) {}
-      }
-
+      // Initialize Web Audio API Volume & Voice Activity Detector (VAD)
       try {
-        speechRecognition = new SpeechRec();
-        speechRecognition.continuous = true;
-        speechRecognition.interimResults = true;
-        speechRecognition.lang = 'ko-KR';
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioSource = audioContext.createMediaStreamSource(hardwareMicStream);
+        audioAnalyser = audioContext.createAnalyser();
+        audioAnalyser.fftSize = 256;
+        audioSource.connect(audioAnalyser);
+      } catch (e) {
+        console.warn('AudioContext VAD setup warning:', e);
+      }
 
-        speechRecognition.onstart = () => {
-          isListening = true;
-          activeVerseWordPointer = 0;
-          verseStartResultIndex = 0;
-          const micBtn = document.getElementById('micBtn');
-          if (micBtn) {
-            micBtn.style.background = '#ef4444';
-            micBtn.innerHTML = '🛑 <span>낭독 멈춤</span>';
-          }
-          const dockWave = document.getElementById('dockAudioWave');
+      const dataArray = new Uint8Array(audioAnalyser ? audioAnalyser.frequencyBinCount : 128);
+
+      // Auto Teleprompter Scrolling Loop (runs every 100ms)
+      if (vadTimer) clearInterval(vadTimer);
+      vadTimer = setInterval(() => {
+        if (!isListening) return;
+
+        let volume = 0;
+        if (audioAnalyser) {
+          audioAnalyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+          volume = sum / dataArray.length;
+        } else {
+          volume = 20; // fallback if AudioContext unsupported
+        }
+
+        // Voice volume threshold for voice activity detection
+        isVoiceSoundDetected = volume > 10;
+
+        const dockWave = document.getElementById('dockAudioWave');
+        const srStatus = document.getElementById('srStatus');
+        const srSub = document.getElementById('srSub');
+
+        if (isVoiceSoundDetected) {
           if (dockWave) dockWave.classList.add('active');
-        };
+          if (srStatus) srStatus.innerText = `🗣️ 목소리 감지 중 (${getSpeedLabel(readingSpeedMultiplier)})`;
+          if (srSub) srSub.innerText = '소리 내어 읽으시면 화면이 부드럽게 위로 따라 올라갑니다';
 
-        speechRecognition.onerror = (e) => {
-          console.warn('SpeechRec error:', e.error);
-          isListening = false;
-          isAutoRestarting = false;
-          const micBtn = document.getElementById('micBtn');
-          if (micBtn) {
-            micBtn.style.background = 'var(--forest)';
-            micBtn.innerHTML = '🎤 <span>낭독 시작</span>';
-          }
-          if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-            openMicGuideModal();
-          }
-          renderChapter();
-        };
+          // Increment progress based on selected speed multiplier
+          activeVerseProgressPercent += (2.2 * readingSpeedMultiplier);
 
-        speechRecognition.onend = () => {
-          if (isListening) {
-            // SILENT SEAMLESS RESTART: Re-start recognition without re-initializing hardware mic
-            try {
-              speechRecognition.start();
-            } catch (err) {
-              setTimeout(() => { if (isListening) startMic(); }, 50);
-            }
-            return;
-          }
-
-          isListening = false;
-          const micBtn = document.getElementById('micBtn');
-          if (micBtn) {
-            micBtn.style.background = 'var(--forest)';
-            micBtn.innerHTML = '🎤 <span>낭독 시작</span>';
-          }
-          renderChapter();
-        };
-
-        speechRecognition.onresult = (e) => {
-          const verses = getVerses();
-          if (activeVerseIndex >= verses.length) return;
-
-          const activeText = verses[activeVerseIndex];
-          const targetKoreanLetters = activeText.replace(/[^ㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-          const targetLen = targetKoreanLetters.length;
-          if (targetLen === 0) return;
-
-          // Collect ONLY transcript results belonging to the current active verse!
-          let recentSpoken = '';
-          const startIdx = Math.max(verseStartResultIndex, e.results.length - 4);
-          for (let i = startIdx; i < e.results.length; ++i) {
-            recentSpoken += ' ' + e.results[i][0].transcript;
-          }
-          currentSpokenTranscript = recentSpoken.trim();
-          if (!currentSpokenTranscript) return;
-
-          const spokenKoreanLetters = currentSpokenTranscript.replace(/[^ㄱ-ㅎㅏ-ㅣ가-힣]/g, '');
-          const spokenLen = spokenKoreanLetters.length;
-
-          // Smooth Progress Percentage (0% to 100% based on spoken syllable count)
-          const rawRatio = spokenLen / targetLen;
-          activeVerseProgressPercent = Math.min(100, Math.round(rawRatio * 100));
-
-          const now = Date.now();
-
-          // VERSE COMPLETION RULE (Character-Count Based Flow):
-          // Completes when spoken syllable count reaches ~80% of verse length (with 700ms cooldown)
-          if (rawRatio >= 0.80 && (now - lastVerseTransitionTimestamp >= 700)) {
-            currentSpokenTranscript = '';
+          if (activeVerseProgressPercent >= 100) {
+            const verses = getVerses();
             const key = `${currentBookId}_${currentChapter}`;
             matchedVerses.add(activeVerseIndex);
             completedVersesMap[key] = Array.from(matchedVerses);
@@ -1407,54 +1398,52 @@
             if (activeVerseIndex < verses.length - 1) {
               activeVerseIndex++;
               activeVerseProgressPercent = 0;
-              verseStartResultIndex = e.results.length; // Lock out previous verse speech!
-              lastVerseTransitionTimestamp = Date.now(); // Activate transition cooldown!
-
               setTimeout(() => {
                 const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
                 if (activeEl) {
                   activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
               }, 50);
+            } else {
+              stopMic();
+              alert('🎉 축하합니다! 이번 장 낭독을 모두 완료하셨습니다!');
             }
             saveUserData();
-            renderChapter();
-            return;
           }
-
           renderChapter();
-        };
-
-        speechRecognition.start();
-      } catch (e) {
-        console.error('startMic error:', e);
-        isListening = false;
-        isAutoRestarting = false;
-        stopMicHardware();
-        const micBtn = document.getElementById('micBtn');
-        if (micBtn) {
-          micBtn.style.background = 'var(--forest)';
-          micBtn.innerHTML = '🎤 <span>낭독 시작</span>';
+        } else {
+          if (dockWave) dockWave.classList.remove('active');
+          if (srStatus) srStatus.innerText = '🎙️ 낭독 소리를 기다리는 중...';
+          if (srSub) srSub.innerText = '성경 말씀을 큰 목소리로 읽으시면 화면이 진행됩니다';
         }
-        renderChapter();
-      }
+      }, 100);
+
+      renderChapter();
     }
 
     function stopMic() {
-      isAutoRestarting = false;
       isListening = false;
+      if (vadTimer) clearInterval(vadTimer);
+      vadTimer = null;
+      if (audioSource) try { audioSource.disconnect(); } catch(e) {}
+      if (audioContext) try { audioContext.close(); } catch(e) {}
       stopMicHardware();
-      if (speechRecognition) {
-        try {
-          speechRecognition.onend = null;
-          speechRecognition.stop();
-        } catch(e) {}
-      }
+      audioContext = null;
+      audioSource = null;
+      audioAnalyser = null;
+      isVoiceSoundDetected = false;
+
       const micBtn = document.getElementById('micBtn');
       if (micBtn) {
         micBtn.style.background = 'var(--forest)';
         micBtn.innerHTML = '🎤 <span>낭독 시작</span>';
       }
+      const dockWave = document.getElementById('dockAudioWave');
+      if (dockWave) dockWave.classList.remove('active');
+      const srStatus = document.getElementById('srStatus');
+      if (srStatus) srStatus.innerText = '마이크가 준비되었습니다';
+      const srSub = document.getElementById('srSub');
+      if (srSub) srSub.innerText = '오른쪽 [낭독 시작] 버튼을 누르고 말씀해 보세요';
       renderChapter();
     }
 
@@ -1681,7 +1670,7 @@
     }
 
     // --- APP VERSION & HARD RELOAD CACHE BUSTER ---
-    const CURRENT_APP_VERSION = '1.0.13';
+    const CURRENT_APP_VERSION = '2.0.0';
 
     function forceHardReload() {
       if ('caches' in window) {
