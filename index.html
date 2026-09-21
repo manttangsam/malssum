@@ -392,6 +392,7 @@
         <span class="streak">🔥 <span id="streakDays">1</span>일째 말씀을 잇는 중</span>
         <button onclick="openInstallModal()" class="ghost-btn" style="min-height: 34px; padding: 0 10px; font-size: 13px; font-weight: 800; background: var(--forest); color: var(--forest-ink); border-color: var(--forest);" type="button">📱 바로가기 설치</button>
         <button onclick="openSyncModal()" class="ghost-btn" style="min-height: 34px; padding: 0 10px; font-size: 13px; font-weight: 800;" type="button">🔄 PC/새 폰 동기화</button>
+        <button onclick="forceHardReload()" class="ghost-btn" style="min-height: 34px; padding: 0 10px; font-size: 13px; font-weight: 800; background: #e07a5f; color: #fff; border-color: #e07a5f;" type="button">⚡ 최신버전 새로고침</button>
         
         <!-- Theme Mode Switches -->
         <div style="display: flex; gap: 4px; background: rgba(0,0,0,0.05); padding: 4px; border-radius: 10px;">
@@ -431,9 +432,12 @@
               <span style="font-size: 0.875rem; font-weight: 900; color: var(--forest); display: block; line-height: 1.4;">[인증샷 공유]<br>버튼으로 숙제 제출</span>
             </div>
           </div>
-          <div style="margin-top: 1rem; text-align: center;">
-            <button onclick="openInstallModal()" class="share-btn" style="width: 100%; min-height: 48px; font-size: 1rem; background: var(--gold); border-color: var(--gold); box-shadow: 0 4px 14px rgba(185, 138, 61, 0.35);" type="button">
+          <div style="margin-top: 1rem; display: flex; gap: 8px; flex-wrap: wrap;">
+            <button onclick="openInstallModal()" class="share-btn" style="flex: 1; min-width: 240px; min-height: 48px; font-size: 1rem; background: var(--gold); border-color: var(--gold); box-shadow: 0 4px 14px rgba(185, 138, 61, 0.35);" type="button">
               📱 스마트폰 바탕화면에 앱 아이콘 만들기 (클릭)
+            </button>
+            <button onclick="forceHardReload()" class="share-btn" style="min-height: 48px; padding: 0 16px; font-size: 0.95rem; background: #e07a5f; border-color: #e07a5f; box-shadow: 0 4px 14px rgba(224, 122, 95, 0.35);" type="button">
+              ⚡ 최신버전 새로고침
             </button>
           </div>
         </div>
@@ -1601,9 +1605,29 @@
       }
     }
 
-    // --- APP VERSION & CACHE MANAGEMENT ---
+    // --- APP VERSION & HARD RELOAD CACHE BUSTER ---
     const CURRENT_APP_VERSION = '1.0.9';
+
+    function forceHardReload() {
+      if ('caches' in window) {
+        caches.keys().then(names => Promise.all(names.map(name => caches.delete(name))));
+      }
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          for (let r of regs) r.unregister();
+        });
+      }
+      const cleanUrl = window.location.protocol + '//' + window.location.host + window.location.pathname + '?v=' + Date.now();
+      window.location.href = cleanUrl;
+    }
+
     (function checkVersionAndCache() {
+      // Always unregister legacy service workers that cause mobile Safari/Chrome hard-caching
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          for (let r of regs) r.unregister();
+        });
+      }
       const cachedVer = localStorage.getItem('malssum_version');
       if (cachedVer !== CURRENT_APP_VERSION) {
         localStorage.setItem('malssum_version', CURRENT_APP_VERSION);
@@ -1614,23 +1638,6 @@
         }
       }
     })();
-
-    // --- SERVICE WORKER REGISTRATION (OFFLINE & NATIVE APP SHELL) ---
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        const swCode = `
-          self.addEventListener('install', (e) => self.skipWaiting());
-          self.addEventListener('activate', (e) => {
-            e.waitUntil(
-              caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => self.clients.claim())
-            );
-          });
-          self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
-        `;
-        const blob = new Blob([swCode], { type: 'application/javascript' });
-        navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(() => {});
-      });
-    }
   </script>
 </body>
 </html>
