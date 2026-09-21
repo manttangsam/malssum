@@ -892,6 +892,20 @@
           fontSize = data.fontSize || 26;
           completedVersesMap = data.completedVerses || {};
 
+          // AUTO-RESUME POSITION: If active verse was already completed, auto-advance to first unread verse!
+          const key = `${currentBookId}_${currentChapter}`;
+          const savedCompleted = new Set(completedVersesMap[key] || []);
+          const verses = getVerses();
+          if (savedCompleted.has(activeVerseIndex)) {
+            let firstUnread = activeVerseIndex;
+            while (firstUnread < verses.length && savedCompleted.has(firstUnread)) {
+              firstUnread++;
+            }
+            if (firstUnread < verses.length) {
+              activeVerseIndex = firstUnread;
+            }
+          }
+
           const todayStr = getTodayString();
           const lastDate = data.lastReadDate || todayStr;
 
@@ -1096,10 +1110,12 @@
         `;
       }
 
-      const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
-      if (activeEl) {
-        activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      setTimeout(() => {
+        const activeEl = document.getElementById(`verse-card-${activeVerseIndex}`);
+        if (activeEl) {
+          activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
 
       const dockWave = document.getElementById('dockAudioWave');
       const srStatus = document.getElementById('srStatus');
