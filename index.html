@@ -1202,12 +1202,6 @@
       currentSpokenTranscript = '';
       saveUserData();
       renderChapter();
-      if (isListening) {
-        isAutoRestarting = true;
-        if (speechRecognition) {
-          try { speechRecognition.stop(); } catch(e){}
-        }
-      }
     }
 
     function toggleMic() {
@@ -1347,12 +1341,12 @@
           const secondLastWordIndex = Math.max(0, totalWords - 2);
           const hasReadEnd = activeVerseCheckedIndices.has(lastWordIndex) || activeVerseCheckedIndices.has(secondLastWordIndex);
 
-          // NATURAL READING COMPANION MODE:
-          // A verse completes if user matched >= 35% of words, OR read the end of the verse, OR spoke enough words
-          const isActiveCompleted = (matchRatio >= 0.35) || hasReadEnd || (spokenWords.length >= Math.max(2, Math.floor(totalWords * 0.4)));
+          // SAFE & ACCURATE VERSE COMPLETION:
+          // Must match at least 55%+ of words AND have read towards the end of the verse (or 75%+ overall match)!
+          // Prevents erratic verse skipping from ambient 2-word noise!
+          const isActiveCompleted = (matchRatio >= 0.75) || (hasReadEnd && matchRatio >= 0.55);
 
           if (isActiveCompleted) {
-            lastVerseJumpTime = now;
             currentSpokenTranscript = '';
             const key = `${currentBookId}_${currentChapter}`;
             matchedVerses.add(activeVerseIndex);
