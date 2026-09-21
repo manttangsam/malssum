@@ -971,7 +971,19 @@
       }
     }
 
+    function checkAppVersion() {
+      const CURRENT_VER = '1.0.5';
+      const savedVer = localStorage.getItem('malssum_app_ver');
+      if (savedVer !== CURRENT_VER) {
+        localStorage.setItem('malssum_app_ver', CURRENT_VER);
+        if (savedVer) {
+          window.location.reload(true);
+        }
+      }
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
+      checkAppVersion();
       checkUrlSyncImport();
       loadUserData();
       initBookSelectors();
@@ -1221,7 +1233,7 @@
       }
 
       const btn = document.getElementById('micBtn');
-      if (btn) {
+      if (btn && !isListening) {
         btn.style.background = '#d97706';
         btn.innerHTML = '⏳ <span>마이크 켜는 중...</span>';
       }
@@ -1247,7 +1259,8 @@
             micBtn.style.background = '#ef4444';
             micBtn.innerHTML = '🛑 <span>낭독 멈춤</span>';
           }
-          renderChapter();
+          const dockWave = document.getElementById('dockAudioWave');
+          if (dockWave) dockWave.classList.add('active');
         };
 
         speechRecognition.onerror = (e) => {
@@ -1266,22 +1279,13 @@
         };
 
         speechRecognition.onend = () => {
-          if (isAutoRestarting) {
-            isAutoRestarting = false;
-            if (isListening) {
-              setTimeout(() => {
-                startMic();
-              }, 150);
-            }
-            return;
-          }
-
           if (isListening) {
-            setTimeout(() => {
-              if (isListening) {
-                startMic();
-              }
-            }, 100);
+            // SEAMLESS AUTO RESTART: Restart mic immediately in background without flashing UI!
+            try {
+              speechRecognition.start();
+            } catch (err) {
+              setTimeout(() => { if (isListening) startMic(); }, 50);
+            }
             return;
           }
 
@@ -1295,13 +1299,7 @@
         };
 
         speechRecognition.onresult = (e) => {
-          const now = Date.now();
-          if (now - lastVerseJumpTime < 1200) {
-            // SAFE COOLDOWN: Prevent rapid multi-verse cascading jumps (e.g. 4절 -> 8절) within 1.2s!
-            return;
-          }
-
-          // SLIDING SPEECH WINDOW: Take ONLY the most recent 3 speech result items to avoid buffer accumulation!
+          // INSTANT 0ms REAL-TIME SPEED MATCHING: Process speech results as fast as the reader speaks!
           const startIndex = Math.max(0, e.results.length - 3);
           let recentSpoken = '';
           for (let i = startIndex; i < e.results.length; ++i) {
