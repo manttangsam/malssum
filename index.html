@@ -383,7 +383,7 @@
         <div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <strong style="margin: 0;">말씀소리</strong>
-            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.6 (실시간 낭독 받아쓰기 모드)</span>
+            <span style="font-size: 11px; background: #e07a5f; color: #fff; padding: 2px 6px; border-radius: 6px; font-weight: 800; word-break: keep-all; white-space: nowrap;">v2.0.7 (이중 음성 감지 보장 모드)</span>
           </div>
           <span>소리 내어 읽는 개역개정 성경 통독</span>
         </div>
@@ -1311,10 +1311,13 @@
       document.body.className = `theme-${t}`;
     }
 
+    let activeVerseAudioUnits = 0;
+
     function selectVerse(idx) {
       activeVerseIndex = idx;
       activeVerseProgressPercent = 0;
       activeVerseSpokenText = '';
+      activeVerseAudioUnits = 0;
       verseStartResultIndex = (speechRecognition && speechRecognition.results) ? speechRecognition.results.length : 0;
       lastVerseTransitionTimestamp = Date.now();
       currentSpokenTranscript = '';
@@ -1333,7 +1336,7 @@
     let isAutoRestarting = false;
     let lastVerseJumpTime = 0;
 
-    function checkSpeechVerseMatch(transcript) {
+    function checkSpeechVerseMatch(transcript, addAudioUnits = 0) {
       if (!isListening) return;
       const verses = getVerses();
       if (activeVerseIndex >= verses.length) return;
@@ -1345,17 +1348,25 @@
         }
       }
 
-      // Update dictation box UI in real-time
-      const dictEl = document.getElementById('dictationTextDisplay');
-      if (dictEl) {
-        dictEl.innerHTML = `"${activeVerseSpokenText}"`;
+      if (addAudioUnits > 0) {
+        activeVerseAudioUnits += addAudioUnits;
       }
 
       const targetText = verses[activeVerseIndex];
       const cleanTargetLen = targetText.replace(/[^가-힣0-9]/g, '').length;
-      const cleanSpokenLen = activeVerseSpokenText.replace(/[^가-힣0-9]/g, '').length;
+      const cleanSpokenLen = activeVerseSpokenText.replace(/[^가-힣0-9]/g, '').length + Math.floor(activeVerseAudioUnits);
       const requiredLen = Math.max(5, Math.floor(cleanTargetLen * 0.45));
       const progressPct = Math.min(100, Math.round((cleanSpokenLen / requiredLen) * 100));
+
+      // Update dictation box UI in real-time
+      const dictEl = document.getElementById('dictationTextDisplay');
+      if (dictEl) {
+        if (activeVerseSpokenText) {
+          dictEl.innerHTML = `"${activeVerseSpokenText}"`;
+        } else {
+          dictEl.innerHTML = `<span style="color: #ef4444; font-weight: 800;">🗣️ 목소리가 감지되고 있습니다... (${progressPct}%)</span>`;
+        }
+      }
 
       const badgeEl = document.getElementById('dictationProgressBadge');
       if (badgeEl) {
@@ -1363,7 +1374,7 @@
         badgeEl.style.color = cleanSpokenLen >= requiredLen ? '#ef4444' : 'var(--gold)';
       }
 
-      // Completion Condition: Spoken char length reaches 45% threshold
+      // Completion Condition: Spoken char length OR Voice sound units reaches 45% threshold
       if (cleanSpokenLen >= requiredLen) {
         const key = `${currentBookId}_${currentChapter}`;
         matchedVerses.add(activeVerseIndex);
@@ -1374,6 +1385,7 @@
         if (activeVerseIndex < verses.length - 1) {
           activeVerseIndex++;
           activeVerseSpokenText = '';
+          activeVerseAudioUnits = 0;
           lastVerseTransitionTimestamp = Date.now();
           saveUserData();
           renderChapter();
@@ -1381,6 +1393,7 @@
           stopMic();
           alert('🎉 축하합니다! 이번 장 낭독을 모두 완료하셨습니다!');
           activeVerseSpokenText = '';
+          activeVerseAudioUnits = 0;
           saveUserData();
           renderChapter();
         }
@@ -1453,7 +1466,7 @@
               if (srSub) {
                 srSub.innerHTML = `🗣️ 받아쓰기 인식 중: <strong style="color: #ef4444;">"${currentSpokenTranscript.slice(-32)}"</strong>`;
               }
-              checkSpeechVerseMatch(currentSpokenTranscript);
+              checkSpeechVerseMatch(currentSpokenTranscript, 0);
             }
           };
 
@@ -1501,10 +1514,8 @@
             bar.style.height = `${h}px`;
             bar.style.backgroundColor = '#ef4444';
           });
-          // Also slowly increment spoken text char length when reading out loud continuously
-          if (Math.random() > 0.3) {
-            checkSpeechVerseMatch('');
-          }
+          // DOUBLE-ENGINE FALLBACK: When voice sound is heard, increment audio progress units (0.35 per 50ms = 7 chars/sec)
+          checkSpeechVerseMatch('', 0.35 * readingSpeedMultiplier);
         } else {
           if (dockWave) dockWave.classList.remove('active');
           if (srStatus) srStatus.innerText = `▶️ 실시간 받아쓰기 모드 (${getSpeedLabel(readingSpeedMultiplier)})`;
