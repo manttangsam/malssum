@@ -12,6 +12,7 @@ state.chapter=Math.max(1,Math.min(Number(state.chapter)||1,BIBLE_BOOKS.find(b=>b
 state.font=Math.max(18,Math.min(34,Number(state.font)||23));
 state.pause=[1000,1800,2800,4000].includes(Number(state.pause))?Number(state.pause):1000;
 state.index=Math.max(0,Number(state.index)||0);
+let microphoneGranted=false, emptyRestarts=0;
 let listening=false, recognition=null, generation=0, pauseTimer=null, restartTimer=null, interim='', starting=false;
 const verses=()=>CHAPTER_DATA[`${state.book}_${state.chapter}`] || [];
 const verseRange=(index=state.index)=>(CHAPTER_RANGES[`${state.book}_${state.chapter}`]||[]).find(([a,b])=>index+1>=a&&index+1<=b)||[index+1,index+1];
@@ -82,34 +83,81 @@ function complete(){
   state.index=last-1;
   const goal=READING_PLANS[state.plan].dailyTargetVerses;
   const reachedGoal=before<goal&&todayEntries().length>=goal;
-  const keepListening=listening;detach();interim='';
+  const keepListening=listening;interim='';
   const previousChapter=`${state.book}_${state.chapter}`;
   const moved=advanceReadingPosition();save();
   const changedChapter=previousChapter!==`${state.book}_${state.chapter}`;
-  if(reachedGoal||!moved||!verses().length||changedChapter){listening=false;starting=false;}
+  if(reachedGoal||!moved||!verses().length||changedChapter){listening=false;starting=false;detach();}
+  else if(keepListening&&recognition)recognition.moveToVerse();
   render();
   if(reachedGoal){status('✓ 오늘 분량을 다 읽었어요!','다음 읽을 위치를 저장했어요. 더 읽으려면 낭독 시작을 눌러 주세요.');$('daily-complete').scrollIntoView({behavior:'smooth',block:'center'});}
   else if(!moved){status('마지막 본문까지 읽었어요','나의 기록에서 지금까지의 진도를 확인해 주세요.');}
   else if(changedChapter){status('다음 장에서 이어 읽어요',verses().length?'낭독 시작을 누르면 다음 장부터 이어집니다.':'다음 장의 본문이 아직 준비되지 않았어요. 읽은 기록은 저장되어 있어요.');}
-  else{$(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});if(keepListening)openRecognition();}
+  else{$(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});if(keepListening){status(`${state.index+1}절을 듣고 있어요`,'한 절 뒤에 잠시 쉬어 주세요.');}}
 }
-function openRecognition(){
-  const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;if(!Speech){listening=false;render();status('이 브라우저에서는 받아쓰기를 지원하지 않아요','음성 인식을 지원하는 브라우저에서 열어 주세요.');return;}
-  const token=++generation;const key=verseKey();const r=new Speech();recognition=r;r.lang='ko-KR';r.continuous=true;r.interimResults=true;const base=entry()?.text||'';
+// Some mobile engines emit a growing phrase in several result slots.
+// Fold only cumulative prefixes within one speech segment, not repeated words inside text.
+function mergeGrowingPhrase(previous,next){
+  if(!previous)return next;if(!next)return previous;
+  if(next===previous||previous.startsWith(next+' '))return previous;
+  if(next.startsWith(previous+' '))return next;
+  return previous+' '+next;
+}
+function mergeRestartReplay(base,text){
+  if(!base||!text)return base||text;
+  if(text===base||text.startsWith(base+' '))return text;
+  if(base.startsWith(text+' '))return base;
+  const old=base.split(/\s+/),fresh=text.split(/\s+/);
+  for(let n=Math.min(old.length,fresh.length);n>=2;n--){
+    if(old.slice(-n).join(' ')===fresh.slice(0,n).join(' '))return [...old,...fresh.slice(n)].join(' ');
+  }
+  return base+' '+text;
+}
+function openRecognition(automatic=false){
+  const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;if(!Speech){listening=false;starting=false;render();status('이 브라우저에서는 받아쓰기를 지원하지 않아요','음성 인식을 지원하는 브라우저에서 열어 주세요.');return;}
+  const token=++generation;const r=new Speech();recognition=r;r.lang='ko-KR';r.continuous=true;r.interimResults=true;
+  let key=verseKey(),base=entry()?.text||'',floor=0,seen=0,segment=0,slots=[],madeProgress=false,replay=automatic;
+  r.moveToVerse=()=>{key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;};
   r.onstart=()=>{if(token!==generation)return;starting=false;status(`${state.index+1}절을 듣고 있어요`,'단어가 달라도 괜찮아요. 한 절 뒤에 잠시 쉬어 주세요.');};
-  r.onspeechstart=()=>{if(token===generation)cancelTimer();};
+  r.onspeechstart=()=>{if(token===generation){segment++;cancelTimer();}};
   r.onspeechend=()=>{if(token===generation)scheduleBoundary();};
   r.onresult=event=>{
     if(token!==generation||!listening||key!==verseKey())return;
-    cancelTimer();let final='',partial='';
-    for(let i=0;i<event.results.length;i++){const result=event.results[i];if(result.isFinal)final+=result[0].transcript+' ';else partial+=result[0].transcript+' ';}
-    const text=[base,final.trim()].filter(Boolean).join(' ');interim=partial;
-    if(text.trim())state.entries[key]={...state.entries[key],text,completed:false};
+    const from=Math.max(floor,event.resultIndex||0);
+    seen=event.results.length;
+    slots.length=seen;
+    for(let i=from;i<seen;i++){
+      const result=event.results[i];
+      slots[i]={text:result[0].transcript.trim(),final:result.isFinal,segment:slots[i]?.segment??segment};
+    }
+    const groups=[];let partial='';
+    for(let i=floor;i<seen;i++){
+      const slot=slots[i];if(!slot)continue;
+      if(!slot.final){partial=mergeGrowingPhrase(partial,slot.text);continue;}
+      const last=groups[groups.length-1];
+      if(last&&last.segment===slot.segment)last.text=mergeGrowingPhrase(last.text,slot.text);
+      else groups.push({segment:slot.segment,text:slot.text});
+    }
+    const final=groups.map(g=>g.text).filter(Boolean).join(' ');
+    const text=replay?mergeRestartReplay(base,final):[base,final].filter(Boolean).join(' ');
+    const changed=text!==(entry()?.text||'')||partial!==interim;
+    // Old/cumulative events must not reset silence timers or spill into the next verse.
+    if(!changed)return;
+    cancelTimer();interim=partial;
+    if(text.trim()){madeProgress=madeProgress||text!==(entry()?.text||'');state.entries[key]={...state.entries[key],text,completed:false};}
     const t=$(`transcript-${state.index}`);if(t)t.textContent=text+(text&&partial?' ':'');const p=$(`interim-${state.index}`);if(p)p.textContent=partial;
     $('finish').disabled=!text.trim();save();scheduleBoundary();
   };
   r.onerror=event=>{if(token!==generation)return;if(event.error==='no-speech')return;stop();status(event.error==='not-allowed'?'마이크 사용을 허용해 주세요':'받아쓰기가 잠시 멈췄어요',event.error==='not-allowed'?'주소창의 사이트 설정에서 마이크를 허용한 뒤 다시 시작해 주세요.':'연결과 마이크를 확인한 뒤 다시 시작해 주세요. 저장된 내용은 유지됩니다.');};
-  r.onend=()=>{if(token!==generation||!listening)return;interim='';recognition=null;render();scheduleBoundary();restartTimer=setTimeout(()=>{if(token===generation&&listening)openRecognition();},350);};
+  r.onend=()=>{
+    if(token!==generation||!listening)return;
+    const endedToken=++generation;recognition=null;interim='';starting=false;
+    emptyRestarts=madeProgress?0:emptyRestarts+1;
+    if(emptyRestarts>=3){stop();status('휴대폰에서 음성 연결이 반복해서 종료됐어요','잠시 후 낭독 시작을 다시 눌러 주세요. 받아쓴 내용은 보관되어 있어요.');return;}
+    render();if(!pauseTimer)scheduleBoundary();
+    status('음성 연결을 다시 준비하고 있어요','듣고 있어요 표시가 나오면 이어서 읽어 주세요.');
+    restartTimer=setTimeout(()=>{if(endedToken===generation&&listening)openRecognition(true);},800*Math.pow(2,Math.max(0,emptyRestarts-1)));
+  };
   try{r.start();}catch{stop();status('마이크를 시작하지 못했어요','잠시 후 낭독 시작을 다시 눌러 주세요.');}
 }
 async function requestMicrophone(startAfterPermission=true){
@@ -117,13 +165,14 @@ async function requestMicrophone(startAfterPermission=true){
   if(window.isSecureContext===false){status('마이크는 HTTPS 주소에서 사용할 수 있어요','현재 HTTP 주소에서는 권한 창을 열 수 없어요. HTTPS 주소로 다시 접속해 주세요.');return;}
   if(!(window.SpeechRecognition||window.webkitSpeechRecognition)){status('이 브라우저에서는 받아쓰기를 지원하지 않아요','Chrome 또는 Safari에서 다시 열어 주세요.');return;}
   if(typeof navigator==='undefined'||!navigator.mediaDevices?.getUserMedia){status('마이크 권한을 요청할 수 없어요','HTTPS 주소를 Chrome 또는 Safari에서 열고 다시 시도해 주세요.');return;}
+  if(startAfterPermission&&microphoneGranted){start();return;}
   const token=++generation;
   starting=true;render();status('마이크 사용을 허용해 주세요',startAfterPermission?'브라우저 권한 창에서 허용을 누르면 낭독이 시작돼요.':'목소리 받아쓰기에 마이크를 사용해요. 허용 후 낭독 시작을 눌러 주세요.');
   try{
     const stream=await navigator.mediaDevices.getUserMedia({audio:true});
     stream.getTracks().forEach(track=>track.stop());
     if(token!==generation)return;
-    starting=false;
+    starting=false;microphoneGranted=true;
     if(startAfterPermission)start();
     else{render();status('마이크 사용 준비가 되었어요','낭독 시작을 누르면 받아쓰기를 시작해요.');}
   }catch(error){
@@ -134,7 +183,7 @@ async function requestMicrophone(startAfterPermission=true){
     else status('마이크를 사용할 수 없어요','마이크를 사용하는 다른 앱을 닫고 다시 눌러 주세요.');
   }
 }
-function start(){if(listening||starting||!verses().length)return;if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}starting=true;listening=true;render();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
+function start(){if(listening||starting||!verses().length)return;if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}emptyRestarts=0;starting=true;listening=true;render();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
 function navigate(delta){stop();const b=BIBLE_BOOKS.findIndex(b=>b.id===state.book);let n=state.chapter+delta;if(n>BIBLE_BOOKS[b].totalChapters&&b<BIBLE_BOOKS.length-1){state.book=BIBLE_BOOKS[b+1].id;n=1;}else if(n<1&&b>0){state.book=BIBLE_BOOKS[b-1].id;n=BIBLE_BOOKS[b-1].totalChapters;}state.chapter=n;state.index=0;selectors();save();render();}
 function ranges(){const groups=new Map();todayEntries().forEach(e=>{const k=`${BIBLE_BOOKS.find(b=>b.id===e.book)?.name||e.book} ${e.chapter}장`;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e.verse);});return Array.from(groups,([k,v])=>`${k} ${v.sort((a,b)=>a-b).join(', ')}절`).join(' · ');}
 // 제공된 개역개정 4판 파일의 절 번호 기준 (없음 표기 포함).
