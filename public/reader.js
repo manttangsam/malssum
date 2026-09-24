@@ -12,6 +12,9 @@ state.chapter=Math.max(1,Math.min(Number(state.chapter)||1,BIBLE_BOOKS.find(b=>b
 state.font=Math.max(18,Math.min(34,Number(state.font)||23));
 state.pause=[1000,1800,2800,4000].includes(Number(state.pause))?Number(state.pause):1000;
 state.index=Math.max(0,Number(state.index)||0);
+const mobileSpeech=typeof navigator!=='undefined'&&(navigator.userAgentData?.mobile||/Android|iPhone|iPad|iPod/i.test(navigator.userAgent||'')||(/Macintosh/.test(navigator.userAgent||'')&&navigator.maxTouchPoints>1));
+if(mobileSpeech)state.pause=Math.max(2800,state.pause);
+let soundActive=false;
 let microphoneGranted=false, emptyRestarts=0;
 let listening=false, recognition=null, generation=0, pauseTimer=null, restartTimer=null, interim='', starting=false;
 const verses=()=>CHAPTER_DATA[`${state.book}_${state.chapter}`] || [];
@@ -51,7 +54,7 @@ function advanceReadingPosition(){
   else return false;
   state.index=0;selectors();return true;
 }
-function selectors(){ $('book').replaceChildren(...BIBLE_BOOKS.map(b=>new Option(b.name,b.id)));$('book').value=state.book;const book=BIBLE_BOOKS.find(b=>b.id===state.book);$('chapter').replaceChildren(...Array.from({length:book.totalChapters},(_,i)=>new Option(`${i+1}장`,i+1)));$('chapter').value=state.chapter;$('plan').value=state.plan;$('pause').value=state.pause; }
+function selectors(){ $('book').replaceChildren(...BIBLE_BOOKS.map(b=>new Option(b.name,b.id)));$('book').value=state.book;const book=BIBLE_BOOKS.find(b=>b.id===state.book);$('chapter').replaceChildren(...Array.from({length:book.totalChapters},(_,i)=>new Option(`${i+1}장`,i+1)));$('chapter').value=state.chapter;$('plan').value=state.plan;$('pause').value=state.pause;$('pause-fast').disabled=mobileSpeech;$('pause-short').disabled=mobileSpeech;$('pause-help').textContent=mobileSpeech?'휴대폰은 중간 끊김을 기다리도록 2.8초 이상 쉬어야 다음 절로 넘어가요.':'문장 중간에 자주 쉬면 길게 설정해 주세요.'; }
 function render(){
   const list=verses();state.index=Math.min(state.index,Math.max(0,list.length-1));state.index=verseRange()[0]-1;document.documentElement.style.setProperty('--verse-size',`${state.font}px`);
   $('chapter-info').textContent=list.length?`${BIBLE_BOOKS.find(b=>b.id===state.book).name} ${state.chapter}장 · ${list.length}절${CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]?' · '+CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]:''}`:'본문 준비 중';
@@ -72,9 +75,15 @@ function render(){
   updateTotals();
 }
 function cancelTimer(){clearTimeout(pauseTimer);pauseTimer=null;}
-function detach(){generation++;clearTimeout(restartTimer);cancelTimer();if(recognition){const old=recognition;recognition=null;old.onend=old.onresult=old.onerror=old.onspeechstart=old.onspeechend=null;old.abort();}}
+function detach(){soundActive=false;generation++;clearTimeout(restartTimer);cancelTimer();if(recognition){const old=recognition;recognition=null;old.onend=old.onresult=old.onerror=old.onspeechstart=old.onspeechend=old.onsoundstart=old.onsoundend=null;old.abort();}}
 function stop(){listening=false;starting=false;detach();interim='';save();render();status('잠시 쉬어가도 괜찮아요','받아쓴 내용은 보관되어 있어요. 시작하면 이어서 읽어요.');}
-function scheduleBoundary(){cancelTimer();if(listening&&entry()?.text?.trim()&&!interim)pauseTimer=setTimeout(()=>complete(),state.pause);}
+function scheduleBoundary(){
+  cancelTimer();
+  if(!listening||soundActive||!recognition||!entry()?.text?.trim()||interim)return;
+  const key=verseKey(),token=generation;
+  const delay=mobileSpeech?Math.max(2800,state.pause):state.pause;
+  pauseTimer=setTimeout(()=>{pauseTimer=null;if(token===generation&&key===verseKey()&&listening&&!soundActive&&!interim&&recognition)complete();},delay);
+}
 function complete(){
   const e=entry();if(!e?.text?.trim()||e.completed)return;
   const before=todayEntries().length;
@@ -119,8 +128,9 @@ function openRecognition(automatic=false){
   let key=verseKey(),base=entry()?.text||'',floor=0,seen=0,segment=0,slots=[],madeProgress=false,replay=automatic;
   r.moveToVerse=()=>{key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;};
   r.onstart=()=>{if(token!==generation)return;starting=false;status(`${state.index+1}절을 듣고 있어요`,'단어가 달라도 괜찮아요. 한 절 뒤에 잠시 쉬어 주세요.');};
-  r.onspeechstart=()=>{if(token===generation){segment++;cancelTimer();}};
-  r.onspeechend=()=>{if(token===generation)scheduleBoundary();};
+  r.onsoundstart=()=>{if(token===generation){soundActive=true;cancelTimer();}};
+  r.onspeechstart=()=>{if(token===generation){segment++;soundActive=true;cancelTimer();}};
+  r.onsoundend=r.onspeechend=()=>{if(token===generation){soundActive=false;scheduleBoundary();}};
   r.onresult=event=>{
     if(token!==generation||!listening||key!==verseKey())return;
     const from=Math.max(floor,event.resultIndex||0);
@@ -151,10 +161,10 @@ function openRecognition(automatic=false){
   r.onerror=event=>{if(token!==generation)return;if(event.error==='no-speech')return;stop();status(event.error==='not-allowed'?'마이크 사용을 허용해 주세요':'받아쓰기가 잠시 멈췄어요',event.error==='not-allowed'?'주소창의 사이트 설정에서 마이크를 허용한 뒤 다시 시작해 주세요.':'연결과 마이크를 확인한 뒤 다시 시작해 주세요. 저장된 내용은 유지됩니다.');};
   r.onend=()=>{
     if(token!==generation||!listening)return;
-    const endedToken=++generation;recognition=null;interim='';starting=false;
+    const endedToken=++generation;cancelTimer();soundActive=false;recognition=null;interim='';starting=false;
     emptyRestarts=madeProgress?0:emptyRestarts+1;
     if(emptyRestarts>=3){stop();status('휴대폰에서 음성 연결이 반복해서 종료됐어요','잠시 후 낭독 시작을 다시 눌러 주세요. 받아쓴 내용은 보관되어 있어요.');return;}
-    render();if(!pauseTimer)scheduleBoundary();
+    render();
     status('음성 연결을 다시 준비하고 있어요','듣고 있어요 표시가 나오면 이어서 읽어 주세요.');
     restartTimer=setTimeout(()=>{if(endedToken===generation&&listening)openRecognition(true);},800*Math.pow(2,Math.max(0,emptyRestarts-1)));
   };
@@ -248,7 +258,7 @@ async function shareToKakao(){
 $('mic').onclick=()=>listening||starting?stop():requestMicrophone();$('finish').onclick=()=>complete();
 $('book').onchange=e=>{stop();state.book=e.target.value;state.chapter=1;state.index=0;selectors();save();render();};
 $('chapter').onchange=e=>{stop();state.chapter=Number(e.target.value);state.index=0;save();render();};
-$('plan').onchange=e=>{stop();state.plan=e.target.value;save();updateTotals();};$('pause').onchange=e=>{state.pause=Number(e.target.value);save();scheduleBoundary();};
+$('plan').onchange=e=>{stop();state.plan=e.target.value;save();updateTotals();};$('pause').onchange=e=>{state.pause=mobileSpeech?Math.max(2800,Number(e.target.value)):Number(e.target.value);$('pause').value=state.pause;save();scheduleBoundary();};
 $('smaller').onclick=()=>{state.font=Math.max(18,state.font-2);save();render();};$('larger').onclick=()=>{state.font=Math.min(34,state.font+2);save();render();};
 $('previous').onclick=()=>navigate(-1);$('next').onclick=()=>navigate(1);$('share-open').onclick=share;$('share-close').onclick=()=>$('share-dialog').close();$('download').onclick=download;$('kakao-share').onclick=shareToKakao;$('copy-share').onclick=copyShare;
 window.addEventListener('pagehide',stop);document.addEventListener('visibilitychange',()=>{if(document.hidden&&(listening||starting))stop();else updateTotals();});

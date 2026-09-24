@@ -2,12 +2,12 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
-function app(saved){
+function app(saved,userAgent=''){
   const nodes=new Map();const timers=new Map();let timerId=0;const stored=new Map(saved?[['malssum_dictation_v3',saved]]:[]);
   const node=()=>({textContent:'',style:{setProperty(){}},classList:{toggle(){}},append(){},replaceChildren(){},scrollIntoView(){},showModal(){},close(){}});
   const document={getElementById:id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);},createElement:node,documentElement:node(),addEventListener(){}};
   class Speech{constructor(){Speech.last=this;this.results=[];this.lastKey=null;}start(){this.onstart?.();}abort(){}}
-  const context=vm.createContext({document,window:{SpeechRecognition:Speech,addEventListener(){}},Option:function(){},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v)},setTimeout:(f,ms)=>{timers.set(++timerId,{f,ms});return timerId;},clearTimeout:id=>timers.delete(id),Date,Map,console,matchMedia:()=>({matches:true})});
+  const context=vm.createContext({document,navigator:{userAgent},window:{SpeechRecognition:Speech,addEventListener(){}},Option:function(){},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v)},setTimeout:(f,ms)=>{timers.set(++timerId,{f,ms});return timerId;},clearTimeout:id=>timers.delete(id),Date,Map,console,matchMedia:()=>({matches:true})});
   vm.runInContext(fs.readFileSync('public/bible-data.js','utf8')+fs.readFileSync('public/reader.js','utf8')+fs.readFileSync('public/backup.js','utf8'),context);
   return {run:code=>vm.runInContext(code,context),nodes,stored,Speech,advance:ms=>{for(const[id,t]of [...timers])if(t.ms===ms){timers.delete(id);t.f();}},say:(text,final=true)=>{const r=[{transcript:text}];r.isFinal=final;const speech=Speech.last;const key=vm.runInContext('verseKey()',context);if(speech.lastKey!==key){speech.results.push(r);speech.lastKey=key;}else speech.results[speech.results.length-1]=r;speech.onresult({results:speech.results,resultIndex:speech.results.length-1});}};
 }
@@ -67,3 +67,8 @@ test('automatic reconnection ignores replay and expired recognizer callbacks',()
 test('repeated empty disconnects stop after bounded retries',()=>{const a=app();a.run('start()');a.Speech.last.onend();a.advance(800);a.Speech.last.onend();a.advance(1600);a.Speech.last.onend();assert.equal(a.run('listening'),false);assert.match(a.nodes.get('status').textContent,/반복해서 종료/);});
 test('stop cancels a pending reconnection',()=>{const a=app();a.run('start()');const r=a.Speech.last;r.onend();a.run('stop()');a.advance(800);assert.equal(a.Speech.last,r);assert.equal(a.run('listening'),false);});
 test('permission granted on entry avoids a second microphone probe on start',async()=>{const a=app();a.run(`globalThis.requests=0;navigator={mediaDevices:{getUserMedia:async()=>{requests++;return {getTracks:()=>[{stop(){}}]}}}}`);await a.run('requestMicrophone(false)');await a.nodes.get('mic').onclick();assert.equal(a.run('requests'),1);assert.equal(a.run('listening'),true);});
+
+
+test('a final fragment while speech is active cannot advance a verse',()=>{const a=app();a.run('start()');const r=a.Speech.last;r.onspeechstart();speechSnapshot(r,['태초에']);a.advance(1000);assert.equal(a.run('state.index'),0);r.onspeechend();a.advance(1000);assert.equal(a.run('state.index'),1);});
+test('mobile short pauses wait longer and resumed sound cancels completion',()=>{const a=app(undefined,'Mozilla/5.0 (Linux; Android 14) Chrome/140 Mobile');a.run('start()');const r=a.Speech.last;speechSnapshot(r,['태초에']);a.advance(1000);assert.equal(a.run('state.index'),0);r.onsoundstart();a.advance(2800);assert.equal(a.run('state.index'),0);speechSnapshot(r,['태초에 하나님이']);r.onsoundend();a.advance(2800);assert.equal(a.run('state.index'),1);});
+test('service disconnection never counts as silence or completes a fragment',()=>{const a=app(undefined,'Android');a.run('start()');const r=a.Speech.last;speechSnapshot(r,['태초에']);r.onend();a.advance(2800);a.advance(1000);assert.equal(a.run('todayEntries().length'),0);a.advance(800);speechSnapshot(a.Speech.last,['태초에']);a.advance(2800);assert.equal(a.run('todayEntries().length'),0);assert.equal(a.run('state.index'),0);});
