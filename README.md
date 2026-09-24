@@ -30,3 +30,5 @@ If you are developing a production application, we recommend enabling type-aware
 ```
 
 See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+
+현재 실제 앱 구조와 실행 방법은 PROJECT_STATUS.md를 참고하세요. index.html이 진입점이며 src/ React 코드는 이전 시제품입니다.
