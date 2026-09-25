@@ -74,6 +74,7 @@ const CHAPTER_RANGES = {"deu_6":[[18,19]],"deu_15":[[4,5]],"deu_30":[[9,10]],"1c
 const CHAPTER_HEADINGS = {"psa_42":"제이권","psa_73":"제삼권","psa_90":"제사권","psa_107":"제오권"};
     const READING_PLANS = {
       '30days': { name: '30일에 1독', days: 30, dailyTargetVerses: 1036 },
+      '100days': { name: '100일에 1독', days: 100, dailyTargetVerses: 312 },
       '1year': { name: '1년에 1독', days: 365, dailyTargetVerses: 86 },
       '2years': { name: '2년에 1독', days: 730, dailyTargetVerses: 43 },
       '3years': { name: '3년에 1독', days: 1095, dailyTargetVerses: 29 }

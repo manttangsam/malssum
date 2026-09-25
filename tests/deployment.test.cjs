@@ -29,3 +29,11 @@ test('release version matches loaded reader and cache-busting script/style URLs'
   assert.ok(assets.length>=5);
   for(const [,ref] of assets)assert.equal(new URL(ref,'https://example.github.io/malssum/').searchParams.get('v'),version);
 });
+
+test('reading Bible label is used in both share card and generated image',()=>{
+  const html=fs.readFileSync('index.html','utf8');
+  const reader=fs.readFileSync('public/reader.js','utf8');
+  assert.match(html,/READING BIBLE/);
+  assert.match(reader,/READING BIBLE/);
+  assert.doesNotMatch(html+reader,/READING JOURNAL/);
+});

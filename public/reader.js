@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.09.25.3';
+const APP_VERSION = '2026.09.26.1';
 const dateKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 let state;
 try { state = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* Recover without removing old records. */ }
@@ -264,7 +264,7 @@ async function createShareBlob(s){
   const progressY=845+lines.length*45;
   canvas.height=Math.max(1400,progressY+360);
   ctx.fillStyle='#edf1e7';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#284e43';
-  ctx.font='28px sans-serif';ctx.fillText('말씀소리 · READING JOURNAL',90,120);ctx.font='26px sans-serif';ctx.fillText(s.date,90,190);
+  ctx.font='28px sans-serif';ctx.fillText('말씀소리 · READING BIBLE',90,120);ctx.font='26px sans-serif';ctx.fillText(s.date,90,190);
   ctx.font='54px "Noto Serif KR", serif';ctx.fillText('오늘도 말씀과 기도로',90,350);ctx.fillText('이만큼 거룩하여졌습니다',90,435);
   ctx.font='160px sans-serif';ctx.fillText(String(s.today),90,650);ctx.font='30px sans-serif';ctx.fillText('절을 소리 내어 읽었어요',90,715);
   ctx.font='26px sans-serif';lines.forEach((l,i)=>ctx.fillText(l,90,815+i*45));
