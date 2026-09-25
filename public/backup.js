@@ -12,6 +12,8 @@ function validateBackup(raw) {
   const book = BIBLE_BOOKS.find(b => b.id === s.book);
   if (!book || !Number.isInteger(s.chapter) || s.chapter < 1 || s.chapter > book.totalChapters || !Number.isInteger(s.index) || s.index < 0 || s.index > 175) fail();
   if (!Object.hasOwn(READING_PLANS, s.plan) || ![500,800,1000,1800,2800,4000].includes(s.pause) || !Number.isFinite(s.font) || s.font < 18 || s.font > 34) fail();
+  if (s.completedReadings !== undefined && (!Number.isInteger(s.completedReadings) || s.completedReadings < 0)) fail();
+  if (s.cycleComplete !== undefined && typeof s.cycleComplete !== 'boolean') fail();
   if (!s.entries || typeof s.entries !== 'object' || Array.isArray(s.entries) || Object.keys(s.entries).length > 32000) fail();
   const entries = {};
   for (const [key, value] of Object.entries(s.entries)) {
@@ -30,7 +32,7 @@ function validateBackup(raw) {
     }
     entries[key] = e;
   }
-  return {book:s.book, chapter:s.chapter, index:s.index, plan:s.plan, pause:s.pause, font:s.font, planStart:s.planStart||dateKey(), entries};
+  return {book:s.book, chapter:s.chapter, index:s.index, plan:s.plan, pause:s.pause, font:s.font, planStart:s.planStart||dateKey(), completedReadings:s.completedReadings||0, cycleComplete:s.cycleComplete===true, entries};
 }
 
 function backupPayload() {
@@ -45,7 +47,7 @@ function mergeBackup(current, incoming) {
     // Preserve completed local records and drafts; an incoming completion can finish a local draft.
     if (!entries[key] || (!entries[key].completed && e.completed)) entries[key] = e;
   }
-  return {...incoming, entries};
+  return {...incoming, completedReadings:Math.max(current.completedReadings||0,incoming.completedReadings||0), cycleComplete:(current.cycleComplete||incoming.cycleComplete)&&Object.keys(entries).length>=TOTAL_BIBLE_VERSES, entries};
 }
 function backupStats(s) {
   const values = Object.values(s.entries);
@@ -53,7 +55,7 @@ function backupStats(s) {
 }
 function updateBackupInfo() {
   const stats = backupStats(state);
-  $('backup-summary').textContent = `보관할 기록: 읽은 말씀 ${stats.completed}절 · 작성 중 ${stats.drafts}절`;
+  $('backup-summary').textContent = `보관할 기록: 완독 누적 ${state.completedReadings||0}독 · 읽은 말씀 ${stats.completed}절 · 작성 중 ${stats.drafts}절`;
   let last;
   try { last = localStorage.getItem('malssum_backup_exported_at'); } catch {}
   $('backup-last').textContent = last ? `최근 백업 내보내기: ${new Date(last).toLocaleString('ko-KR')} · 외부 보관 여부도 확인해 주세요.` : '아직 백업 파일을 내보내지 않았어요.';

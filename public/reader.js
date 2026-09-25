@@ -1,13 +1,15 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.09.26.3';
+const APP_VERSION = '2026.09.26.4';
 const dateKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 let state;
 try { state = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* Recover without removing old records. */ }
 if (!state || typeof state !== 'object' || !state.entries || typeof state.entries !== 'object') state = {book:'gen',chapter:1,index:0,plan:'1year',pause:1000,font:23,entries:{}};
 if (!BIBLE_BOOKS.some(b=>b.id===state.book)) state.book='gen';
 if (!READING_PLANS[state.plan]) state.plan='1year';
+state.completedReadings=Number.isInteger(state.completedReadings)&&state.completedReadings>=0?state.completedReadings:0;
+state.cycleComplete=state.cycleComplete===true;
 state.planStart = validPlanDate(state.planStart) ? state.planStart : dateKey();
 state.chapter=Math.max(1,Math.min(Number(state.chapter)||1,BIBLE_BOOKS.find(b=>b.id===state.book).totalChapters));
 state.font=Math.max(18,Math.min(34,Number(state.font)||23));
@@ -39,6 +41,7 @@ function updateTotals(){
   const n=todayEntries().length;const goal=READING_PLANS[state.plan].dailyTargetVerses;const done=n>=goal;
   $('today-count').textContent=n;$('goal-count').textContent=`/ ${goal.toLocaleString('ko-KR')}절`;$('daily-progress').max=goal;$('daily-progress').value=n;
   $('goal-message').textContent=done?'✓ 오늘 분량 완료':`오늘 목표까지 ${goal-n}절 남았어요.`;
+  $('completion-count').textContent=`완독 누적 ${state.completedReadings.toLocaleString('ko-KR')}독`;
   $('daily-complete').hidden=!done;
   const calendar=planCalendar();
   $('elapsed-days').textContent=`${calendar.elapsed}일`;$('remaining-days').textContent=`${calendar.remaining}일`;
@@ -92,6 +95,8 @@ function complete(){
   const before=todayEntries().length;
   cancelTimer();const [first,last]=verseRange();
   for(let v=first;v<=last;v++){const k=`${state.book}_${state.chapter}_${v}`;if(!state.entries[k]?.completed)state.entries[k]={text:e.text,completed:true,date:dateKey(),book:state.book,chapter:state.chapter,verse:v};}
+  const finishedReading=!state.cycleComplete&&overallProgress().count===TOTAL_BIBLE_VERSES;
+  if(finishedReading){state.completedReadings++;state.cycleComplete=true;}
   state.index=last-1;
   const goal=READING_PLANS[state.plan].dailyTargetVerses;
   const reachedGoal=before<goal&&todayEntries().length>=goal;
@@ -102,7 +107,8 @@ function complete(){
   if(reachedGoal||!moved||!verses().length||changedChapter){listening=false;starting=false;detach();}
   else if(keepListening&&recognition)recognition.moveToVerse();
   render();
-  if(reachedGoal){status('✓ 오늘 분량을 다 읽었어요!','다음 읽을 위치를 저장했어요. 더 읽으려면 낭독 시작을 눌러 주세요.');$('daily-complete').scrollIntoView({behavior:'smooth',block:'center'});}
+  if(finishedReading){status(`✓ 성경 ${state.completedReadings}독을 완독했어요!`,'낭독 시작을 누르면 창세기 1장부터 새 통독을 시작해요.');scrollToActiveVerse();}
+  else if(reachedGoal){status('✓ 오늘 분량을 다 읽었어요!','다음 읽을 위치를 저장했어요. 더 읽으려면 낭독 시작을 눌러 주세요.');$('daily-complete').scrollIntoView({behavior:'smooth',block:'center'});}
   else if(!moved){status('마지막 본문까지 읽었어요','나의 기록에서 지금까지의 진도를 확인해 주세요.');}
   else if(changedChapter){scrollToActiveVerse();status('다음 장에서 이어 읽어요',verses().length?'낭독 시작을 누르면 다음 장부터 이어집니다.':'다음 장의 본문이 아직 준비되지 않았어요. 읽은 기록은 저장되어 있어요.');}
   else{$(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});if(keepListening){status(`${state.index+1}절을 듣고 있어요`,'한 절 뒤에 잠시 쉬어 주세요.');if(!recognition){clearTimeout(restartTimer);openRecognition(true);}}}
@@ -234,7 +240,7 @@ async function requestMicrophone(startAfterPermission=true){
     else status('마이크를 사용할 수 없어요','마이크를 사용하는 다른 앱을 닫고 다시 눌러 주세요.');
   }
 }
-function start(){if(listening||starting||!verses().length)return;if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}completedReplay=null;emptyRestarts=0;starting=true;listening=true;render();scrollToActiveVerse();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
+function start(){if(listening||starting||!verses().length)return;if(state.cycleComplete){state.entries={};state.book='gen';state.chapter=1;state.index=0;state.planStart=dateKey();state.cycleComplete=false;selectors();save();render();}if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}completedReplay=null;emptyRestarts=0;starting=true;listening=true;render();scrollToActiveVerse();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
 function navigate(delta){stop();const b=BIBLE_BOOKS.findIndex(b=>b.id===state.book);let n=state.chapter+delta;if(n>BIBLE_BOOKS[b].totalChapters&&b<BIBLE_BOOKS.length-1){state.book=BIBLE_BOOKS[b+1].id;n=1;}else if(n<1&&b>0){state.book=BIBLE_BOOKS[b-1].id;n=BIBLE_BOOKS[b-1].totalChapters;}state.chapter=n;state.index=0;selectors();save();render();}
 function ranges(){const groups=new Map();todayEntries().forEach(e=>{const k=`${BIBLE_BOOKS.find(b=>b.id===e.book)?.name||e.book} ${e.chapter}장`;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e.verse);});return Array.from(groups,([k,v])=>`${k} ${v.sort((a,b)=>a-b).join(', ')}절`).join(' · ');}
 // 제공된 개역개정 4판 파일의 절 번호 기준 (없음 표기 포함).
@@ -246,13 +252,14 @@ function overallProgress(){
   return {count,percent,label:count>0&&percent<0.01?'< 0.01%':`${percent.toFixed(2)}%`};
 }
 let shareSnapshot=null, shareFile=null, shareRevision=0;
-function captureShare(){return {date:dateKey(),today:todayEntries().length,ranges:ranges()||'첫 번째 낭독을 기다리고 있어요.',overall:overallProgress()};}
-function shareText(snapshot){return `[말씀소리 · 나의 낭독 기록]\n${snapshot.date}\n오늘 읽은 말씀: ${snapshot.today}절\n${snapshot.ranges}\n성경 전체 진도: ${snapshot.overall.label}\n누적 ${snapshot.overall.count.toLocaleString('ko-KR')} / ${TOTAL_BIBLE_VERSES.toLocaleString('ko-KR')}절 (개역개정 기준)\n나의 속도로, 매일 한 걸음.`;}
+function captureShare(){return {date:dateKey(),today:todayEntries().length,ranges:ranges()||'첫 번째 낭독을 기다리고 있어요.',overall:overallProgress(),completedReadings:state.completedReadings};}
+function shareText(snapshot){return `[말씀소리 · 나의 낭독 기록]\n${snapshot.date}\n오늘 읽은 말씀: ${snapshot.today}절\n${snapshot.ranges}\n완독 누적: ${snapshot.completedReadings}독\n성경 전체 진도: ${snapshot.overall.label}\n누적 ${snapshot.overall.count.toLocaleString('ko-KR')} / ${TOTAL_BIBLE_VERSES.toLocaleString('ko-KR')}절 (개역개정 기준)\n나의 속도로, 매일 한 걸음.`;}
 function share(){
   updateTotals();shareSnapshot=captureShare();shareFile=null;const revision=++shareRevision;
   const s=shareSnapshot;
   $('share-date').textContent=s.date.replaceAll('-','. ');$('share-count').textContent=s.today;$('share-ranges').textContent=s.ranges;
   $('share-percent').textContent=s.overall.label;$('share-progress').max=TOTAL_BIBLE_VERSES;$('share-progress').value=s.overall.count;
+  $('share-completions').textContent=`완독 누적 ${s.completedReadings.toLocaleString('ko-KR')}독`;
   $('share-total').textContent=`누적 ${s.overall.count.toLocaleString('ko-KR')} / ${TOTAL_BIBLE_VERSES.toLocaleString('ko-KR')}절`;
   $('share-message').textContent='';$('share-copy-text').hidden=true;$('share-dialog').showModal();
   // Prepare before the user's share tap, preserving Web Share's user activation.
@@ -273,7 +280,8 @@ async function createShareBlob(s){
   ctx.font='26px sans-serif';lines.forEach((l,i)=>ctx.fillText(l,90,815+i*45));
   ctx.font='32px sans-serif';ctx.fillText(`성경 전체 진도  ${s.overall.label}`,90,progressY+45);
   ctx.fillStyle='#d4dfce';ctx.fillRect(90,progressY+75,900,12);ctx.fillStyle='#284e43';ctx.fillRect(90,progressY+75,900*s.overall.percent/100,12);
-  ctx.font='26px sans-serif';ctx.fillText(`누적 ${s.overall.count.toLocaleString('ko-KR')} / 31,102절 · 개역개정 기준`,90,progressY+135);
+  ctx.font='26px sans-serif';ctx.fillText(`완독 누적 ${s.completedReadings.toLocaleString('ko-KR')}독`,90,progressY+135);
+  ctx.fillText(`누적 ${s.overall.count.toLocaleString('ko-KR')} / 31,102절 · 개역개정 기준`,90,progressY+180);
   ctx.fillText('나의 속도로, 매일 한 걸음.',90,canvas.height-90);
   return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('image')),'image/png'));
 }
