@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.09.25.2';
+const APP_VERSION = '2026.09.25.3';
 const dateKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 let state;
 try { state = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* Recover without removing old records. */ }
@@ -14,7 +14,6 @@ state.font=Math.max(18,Math.min(34,Number(state.font)||23));
 state.pause=[1000,1800,2800,4000].includes(Number(state.pause))?Number(state.pause):1000;
 state.index=Math.max(0,Number(state.index)||0);
 const mobileSpeech=typeof navigator!=='undefined'&&(navigator.userAgentData?.mobile||/Android|iPhone|iPad|iPod/i.test(navigator.userAgent||'')||(/Macintosh/.test(navigator.userAgent||'')&&navigator.maxTouchPoints>1));
-if(mobileSpeech)state.pause=Math.max(2800,state.pause);
 let soundActive=false, completedReplay=null;
 let microphoneGranted=false, emptyRestarts=0;
 let listening=false, recognition=null, generation=0, pauseTimer=null, restartTimer=null, interim='', starting=false;
@@ -55,7 +54,7 @@ function advanceReadingPosition(){
   else return false;
   state.index=0;selectors();return true;
 }
-function selectors(){ $('book').replaceChildren(...BIBLE_BOOKS.map(b=>new Option(b.name,b.id)));$('book').value=state.book;const book=BIBLE_BOOKS.find(b=>b.id===state.book);$('chapter').replaceChildren(...Array.from({length:book.totalChapters},(_,i)=>new Option(`${i+1}장`,i+1)));$('chapter').value=state.chapter;$('plan').value=state.plan;$('pause').value=state.pause;$('pause-fast').disabled=mobileSpeech;$('pause-short').disabled=mobileSpeech;$('pause-help').textContent=mobileSpeech?'휴대폰은 중간 끊김을 기다리도록 2.8초 이상 쉬어야 다음 절로 넘어가요.':'문장 중간에 자주 쉬면 길게 설정해 주세요.'; }
+function selectors(){ $('book').replaceChildren(...BIBLE_BOOKS.map(b=>new Option(b.name,b.id)));$('book').value=state.book;const book=BIBLE_BOOKS.find(b=>b.id===state.book);$('chapter').replaceChildren(...Array.from({length:book.totalChapters},(_,i)=>new Option(`${i+1}장`,i+1)));$('chapter').value=state.chapter;$('plan').value=state.plan;$('pause').value=state.pause;$('pause-help').textContent='문장 중간에 자주 쉬면 길게 설정해 주세요.'; }
 function render(){
   const list=verses();state.index=Math.min(state.index,Math.max(0,list.length-1));state.index=verseRange()[0]-1;document.documentElement.style.setProperty('--verse-size',`${state.font}px`);
   $('chapter-info').textContent=list.length?`${BIBLE_BOOKS.find(b=>b.id===state.book).name} ${state.chapter}장 · ${list.length}절${CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]?' · '+CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]:''}`:'본문 준비 중';
@@ -82,7 +81,7 @@ function scheduleBoundary(){
   cancelTimer();
   if(!listening||soundActive||!recognition?.hasFreshResult()||!entry()?.text?.trim()||interim)return;
   const key=verseKey(),token=generation;
-  const delay=mobileSpeech?Math.max(2800,state.pause):state.pause;
+  const delay=state.pause;
   pauseTimer=setTimeout(()=>{pauseTimer=null;if(token===generation&&key===verseKey()&&listening&&!soundActive&&!interim&&recognition?.hasFreshResult())complete();},delay);
 }
 function complete(){
@@ -198,7 +197,7 @@ function openRecognition(automatic=false){
         if(endedToken!==generation||!listening||verseKey()!==endedKey||entry()?.text!==endedText)return;
         complete();
         if(listening&&endedToken===generation)openRecognition(true);
-      },mobileSpeech?Math.max(2800,state.pause):state.pause);
+      },state.pause);
       return;
     }
     emptyRestarts=madeProgress?0:emptyRestarts+1;
@@ -297,7 +296,7 @@ async function shareToKakao(){
 $('mic').onclick=()=>listening||starting?stop():requestMicrophone();$('finish').onclick=()=>complete();
 $('book').onchange=e=>{stop();state.book=e.target.value;state.chapter=1;state.index=0;selectors();save();render();};
 $('chapter').onchange=e=>{stop();state.chapter=Number(e.target.value);state.index=0;save();render();};
-$('plan').onchange=e=>{stop();state.plan=e.target.value;save();updateTotals();};$('pause').onchange=e=>{state.pause=mobileSpeech?Math.max(2800,Number(e.target.value)):Number(e.target.value);$('pause').value=state.pause;save();scheduleBoundary();};
+$('plan').onchange=e=>{stop();state.plan=e.target.value;save();updateTotals();};$('pause').onchange=e=>{state.pause=Number(e.target.value);save();scheduleBoundary();};
 $('smaller').onclick=()=>{state.font=Math.max(18,state.font-2);save();render();};$('larger').onclick=()=>{state.font=Math.min(34,state.font+2);save();render();};
 $('previous').onclick=()=>navigate(-1);$('next').onclick=()=>navigate(1);$('share-open').onclick=share;$('share-close').onclick=()=>$('share-dialog').close();$('download').onclick=download;$('kakao-share').onclick=shareToKakao;$('copy-share').onclick=copyShare;
 window.addEventListener('pagehide',stop);document.addEventListener('visibilitychange',()=>{if(document.hidden&&(listening||starting))stop();else updateTotals();});
