@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.09.26.2';
+const APP_VERSION = '2026.09.26.3';
 const dateKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 let state;
 try { state = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* Recover without removing old records. */ }
@@ -104,7 +104,7 @@ function complete(){
   render();
   if(reachedGoal){status('✓ 오늘 분량을 다 읽었어요!','다음 읽을 위치를 저장했어요. 더 읽으려면 낭독 시작을 눌러 주세요.');$('daily-complete').scrollIntoView({behavior:'smooth',block:'center'});}
   else if(!moved){status('마지막 본문까지 읽었어요','나의 기록에서 지금까지의 진도를 확인해 주세요.');}
-  else if(changedChapter){status('다음 장에서 이어 읽어요',verses().length?'낭독 시작을 누르면 다음 장부터 이어집니다.':'다음 장의 본문이 아직 준비되지 않았어요. 읽은 기록은 저장되어 있어요.');}
+  else if(changedChapter){scrollToActiveVerse();status('다음 장에서 이어 읽어요',verses().length?'낭독 시작을 누르면 다음 장부터 이어집니다.':'다음 장의 본문이 아직 준비되지 않았어요. 읽은 기록은 저장되어 있어요.');}
   else{$(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});if(keepListening){status(`${state.index+1}절을 듣고 있어요`,'한 절 뒤에 잠시 쉬어 주세요.');if(!recognition){clearTimeout(restartTimer);openRecognition(true);}}}
 }
 // Some mobile engines emit a growing phrase in several result slots.
@@ -150,7 +150,7 @@ function openRecognition(automatic=false){
   let freshResult=false,speechEnded=false;
   r.hasFreshResult=()=>freshResult;
   r.moveToVerse=()=>{key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;freshResult=false;speechEnded=false;};
-  r.onstart=()=>{if(token!==generation)return;starting=false;status(`${state.index+1}절을 듣고 있어요`,'단어가 달라도 괜찮아요. 한 절 뒤에 잠시 쉬어 주세요.');};
+  r.onstart=()=>{if(token!==generation)return;starting=false;scrollToActiveVerse();status(`${state.index+1}절을 듣고 있어요`,'단어가 달라도 괜찮아요. 한 절 뒤에 잠시 쉬어 주세요.');};
   r.onsoundstart=()=>{if(token===generation){soundActive=true;speechEnded=false;cancelTimer();}};
   r.onspeechstart=()=>{if(token===generation){segment++;soundActive=true;speechEnded=false;cancelTimer();}};
   r.onsoundend=r.onspeechend=()=>{if(token===generation){soundActive=false;speechEnded=true;scheduleBoundary();}};
