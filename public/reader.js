@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.09.26.1';
+const APP_VERSION = '2026.09.26.2';
 const dateKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 let state;
 try { state = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* Recover without removing old records. */ }
@@ -11,7 +11,7 @@ if (!READING_PLANS[state.plan]) state.plan='1year';
 state.planStart = validPlanDate(state.planStart) ? state.planStart : dateKey();
 state.chapter=Math.max(1,Math.min(Number(state.chapter)||1,BIBLE_BOOKS.find(b=>b.id===state.book).totalChapters));
 state.font=Math.max(18,Math.min(34,Number(state.font)||23));
-state.pause=[1000,1800,2800,4000].includes(Number(state.pause))?Number(state.pause):1000;
+state.pause=[500,800,1000,1800,2800,4000].includes(Number(state.pause))?Number(state.pause):1000;
 state.index=Math.max(0,Number(state.index)||0);
 const mobileSpeech=typeof navigator!=='undefined'&&(navigator.userAgentData?.mobile||/Android|iPhone|iPad|iPod/i.test(navigator.userAgent||'')||(/Macintosh/.test(navigator.userAgent||'')&&navigator.maxTouchPoints>1));
 let soundActive=false, completedReplay=null;
@@ -75,6 +75,9 @@ function render(){
   updateTotals();
 }
 function cancelTimer(){clearTimeout(pauseTimer);pauseTimer=null;}
+function scrollToActiveVerse(){
+  $(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
+}
 function detach(){soundActive=false;generation++;clearTimeout(restartTimer);cancelTimer();if(recognition){const old=recognition;recognition=null;old.onend=old.onresult=old.onerror=old.onspeechstart=old.onspeechend=old.onsoundstart=old.onsoundend=null;old.abort();}}
 function stop(){listening=false;starting=false;detach();interim='';save();render();status('잠시 쉬어가도 괜찮아요','받아쓴 내용은 보관되어 있어요. 시작하면 이어서 읽어요.');}
 function scheduleBoundary(){
@@ -231,7 +234,7 @@ async function requestMicrophone(startAfterPermission=true){
     else status('마이크를 사용할 수 없어요','마이크를 사용하는 다른 앱을 닫고 다시 눌러 주세요.');
   }
 }
-function start(){if(listening||starting||!verses().length)return;if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}completedReplay=null;emptyRestarts=0;starting=true;listening=true;render();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
+function start(){if(listening||starting||!verses().length)return;if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}completedReplay=null;emptyRestarts=0;starting=true;listening=true;render();scrollToActiveVerse();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
 function navigate(delta){stop();const b=BIBLE_BOOKS.findIndex(b=>b.id===state.book);let n=state.chapter+delta;if(n>BIBLE_BOOKS[b].totalChapters&&b<BIBLE_BOOKS.length-1){state.book=BIBLE_BOOKS[b+1].id;n=1;}else if(n<1&&b>0){state.book=BIBLE_BOOKS[b-1].id;n=BIBLE_BOOKS[b-1].totalChapters;}state.chapter=n;state.index=0;selectors();save();render();}
 function ranges(){const groups=new Map();todayEntries().forEach(e=>{const k=`${BIBLE_BOOKS.find(b=>b.id===e.book)?.name||e.book} ${e.chapter}장`;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e.verse);});return Array.from(groups,([k,v])=>`${k} ${v.sort((a,b)=>a-b).join(', ')}절`).join(' · ');}
 // 제공된 개역개정 4판 파일의 절 번호 기준 (없음 표기 포함).

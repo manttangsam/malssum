@@ -11,7 +11,7 @@ function validateBackup(raw) {
   if (s.planStart !== undefined && !validPlanDate(s.planStart)) fail();
   const book = BIBLE_BOOKS.find(b => b.id === s.book);
   if (!book || !Number.isInteger(s.chapter) || s.chapter < 1 || s.chapter > book.totalChapters || !Number.isInteger(s.index) || s.index < 0 || s.index > 175) fail();
-  if (!Object.hasOwn(READING_PLANS, s.plan) || ![1000,1800,2800,4000].includes(s.pause) || !Number.isFinite(s.font) || s.font < 18 || s.font > 34) fail();
+  if (!Object.hasOwn(READING_PLANS, s.plan) || ![500,800,1000,1800,2800,4000].includes(s.pause) || !Number.isFinite(s.font) || s.font < 18 || s.font > 34) fail();
   if (!s.entries || typeof s.entries !== 'object' || Array.isArray(s.entries) || Object.keys(s.entries).length > 32000) fail();
   const entries = {};
   for (const [key, value] of Object.entries(s.entries)) {
