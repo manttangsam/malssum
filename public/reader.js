@@ -102,7 +102,7 @@ function complete(){
   if(reachedGoal){status('✓ 오늘 분량을 다 읽었어요!','다음 읽을 위치를 저장했어요. 더 읽으려면 낭독 시작을 눌러 주세요.');$('daily-complete').scrollIntoView({behavior:'smooth',block:'center'});}
   else if(!moved){status('마지막 본문까지 읽었어요','나의 기록에서 지금까지의 진도를 확인해 주세요.');}
   else if(changedChapter){status('다음 장에서 이어 읽어요',verses().length?'낭독 시작을 누르면 다음 장부터 이어집니다.':'다음 장의 본문이 아직 준비되지 않았어요. 읽은 기록은 저장되어 있어요.');}
-  else{$(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});if(keepListening){status(`${state.index+1}절을 듣고 있어요`,'한 절 뒤에 잠시 쉬어 주세요.');}}
+  else{$(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});if(keepListening){status(`${state.index+1}절을 듣고 있어요`,'한 절 뒤에 잠시 쉬어 주세요.');if(!recognition){clearTimeout(restartTimer);openRecognition(true);}}}
 }
 // Some mobile engines emit a growing phrase in several result slots.
 // Fold only cumulative prefixes within one speech segment, not repeated words inside text.
@@ -144,18 +144,17 @@ function openRecognition(automatic=false){
   const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;if(!Speech){listening=false;starting=false;render();status('이 브라우저에서는 받아쓰기를 지원하지 않아요','음성 인식을 지원하는 브라우저에서 열어 주세요.');return;}
   const token=++generation;const r=new Speech();recognition=r;r.lang='ko-KR';r.continuous=true;r.interimResults=true;
   let key=verseKey(),base=entry()?.text||'',floor=0,seen=0,segment=0,slots=[],madeProgress=false,replay=automatic;
-  let freshResult=false,awaitingSpeech=mobileSpeech&&(automatic||completedReplay?.key===key);
+  let freshResult=false,speechEnded=false;
   r.hasFreshResult=()=>freshResult;
-  r.moveToVerse=()=>{key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;freshResult=false;awaitingSpeech=mobileSpeech;};
+  r.moveToVerse=()=>{key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;freshResult=false;speechEnded=false;};
   r.onstart=()=>{if(token!==generation)return;starting=false;status(`${state.index+1}절을 듣고 있어요`,'단어가 달라도 괜찮아요. 한 절 뒤에 잠시 쉬어 주세요.');};
-  r.onsoundstart=()=>{if(token===generation){soundActive=true;cancelTimer();}};
-  r.onspeechstart=()=>{if(token===generation){segment++;awaitingSpeech=false;soundActive=true;cancelTimer();}};
-  r.onsoundend=r.onspeechend=()=>{if(token===generation){soundActive=false;scheduleBoundary();}};
+  r.onsoundstart=()=>{if(token===generation){soundActive=true;speechEnded=false;cancelTimer();}};
+  r.onspeechstart=()=>{if(token===generation){segment++;soundActive=true;speechEnded=false;cancelTimer();}};
+  r.onsoundend=r.onspeechend=()=>{if(token===generation){soundActive=false;speechEnded=true;scheduleBoundary();}};
   r.onresult=event=>{
     if(token!==generation||!listening||key!==verseKey())return;
     const from=Math.max(floor,event.resultIndex||0);
     seen=event.results.length;
-    if(awaitingSpeech){floor=seen;cancelTimer();return;}
     slots.length=seen;
     for(let i=from;i<seen;i++){
       const result=event.results[i];
@@ -186,7 +185,21 @@ function openRecognition(automatic=false){
   r.onerror=event=>{if(token!==generation)return;if(event.error==='no-speech')return;stop();status(event.error==='not-allowed'?'마이크 사용을 허용해 주세요':'받아쓰기가 잠시 멈췄어요',event.error==='not-allowed'?'주소창의 사이트 설정에서 마이크를 허용한 뒤 다시 시작해 주세요.':'연결과 마이크를 확인한 뒤 다시 시작해 주세요. 저장된 내용은 유지됩니다.');};
   r.onend=()=>{
     if(token!==generation||!listening)return;
+    // A confirmed speech-end remains valid when Android closes the service
+    // before the pause expires. An unexpected disconnect alone is not completion.
+    const pendingBoundary=speechEnded&&freshResult&&!soundActive&&!interim&&pauseTimer!==null;
+    const endedKey=verseKey(),endedText=entry()?.text;
     const endedToken=++generation;cancelTimer();soundActive=false;recognition=null;interim='';starting=false;
+    if(pendingBoundary){
+      render();status(`${state.index+1}절을 마무리하고 있어요`,'다음 절을 듣고 있어요 표시가 나오면 이어서 읽어 주세요.');
+      pauseTimer=setTimeout(()=>{
+        pauseTimer=null;
+        if(endedToken!==generation||!listening||verseKey()!==endedKey||entry()?.text!==endedText)return;
+        complete();
+        if(listening&&endedToken===generation)openRecognition(true);
+      },mobileSpeech?Math.max(2800,state.pause):state.pause);
+      return;
+    }
     emptyRestarts=madeProgress?0:emptyRestarts+1;
     if(emptyRestarts>=3){stop();status('휴대폰에서 음성 연결이 반복해서 종료됐어요','잠시 후 낭독 시작을 다시 눌러 주세요. 받아쓴 내용은 보관되어 있어요.');return;}
     render();
