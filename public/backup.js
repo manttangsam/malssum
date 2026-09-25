@@ -38,8 +38,8 @@ function validateBackup(raw) {
 function backupPayload() {
   return {format:BACKUP_FORMAT, version:1, exportedAt:new Date().toISOString(), state:JSON.parse(JSON.stringify(state))};
 }
-function backupFile() {
-  return new File([JSON.stringify(backupPayload(),null,2)], `말씀소리-전체기록-${dateKey()}.json`, {type:'application/json'});
+function backupFile(shareCompatible=false) {
+  return new File([JSON.stringify(backupPayload(),null,2)], `말씀소리-전체기록-${dateKey()}.${shareCompatible?'txt':'json'}`, {type:shareCompatible?'text/plain':'application/json'});
 }
 function mergeBackup(current, incoming) {
   const entries = {...current.entries};
@@ -76,16 +76,20 @@ function downloadBackup() {
   } catch { $('backup-message').textContent = '백업 파일을 만들지 못했어요. 저장 공간을 확인하고 다시 시도해 주세요.'; }
 }
 async function shareBackup() {
+  const message=$('backup-share-message');message.textContent='공유창을 준비하고 있어요…';
   try {
-    const file = backupFile();
-    if (!navigator.share || !navigator.canShare?.({files:[file]})) {
-      $('backup-message').textContent = '이 브라우저에서는 파일 보내기를 지원하지 않아요. 먼저 백업 파일을 저장한 뒤 드라이브나 다른 기기로 옮겨 주세요.';
+    if (!navigator.share) {
+      message.textContent = '이 브라우저에서는 파일 보내기를 지원하지 않아요. 위의 백업 파일 저장을 이용해 주세요.';
       return;
     }
-    await navigator.share({files:[file], title:'말씀소리 전체 기록 백업'});
+    const jsonFile=backupFile();
+    const textFile=backupFile(true);
+    const file=navigator.canShare?.({files:[jsonFile]})?jsonFile:navigator.canShare?.({files:[textFile]})?textFile:null;
+    if(!file){message.textContent='이 브라우저에서는 백업 파일을 다른 앱으로 보낼 수 없어요. 위의 백업 파일 저장을 이용해 주세요.';return;}
+    await navigator.share({files:[file], title:'말씀소리 전체 기록 백업', text:'말씀소리 전체 기록 백업 파일입니다.'});
     noteExport();
-    $('backup-message').textContent = '공유창을 닫았어요. 선택한 곳에 파일이 보관되었는지 확인해 주세요.';
-  } catch (error) { $('backup-message').textContent = error.name === 'AbortError' ? '백업 보내기를 취소했어요.' : '백업 파일을 보내지 못했어요. 파일 저장을 이용해 주세요.'; }
+    message.textContent = '공유창을 닫았어요. 카카오톡이나 선택한 곳에 파일이 도착했는지 확인해 주세요.';
+  } catch (error) { message.textContent = error.name === 'AbortError' ? '백업 보내기를 취소했어요.' : '백업 파일을 보내지 못했어요. 위의 백업 파일 저장을 이용해 주세요.'; }
 }
 async function selectBackup(file) {
   const selection = ++backupSelection;
@@ -126,6 +130,7 @@ function restoreBackup() {
 $('backup-open').onclick = () => {
   stop(); pendingRestore = null; backupSelection++;
   $('backup-file').value = ''; $('backup-preview').hidden = true; $('backup-message').textContent = '';
+  $('backup-share-message').textContent = '';
   updateBackupInfo(); $('backup-dialog').showModal();
 };
 $('backup-close').onclick = () => { backupSelection++; $('backup-dialog').close(); };
