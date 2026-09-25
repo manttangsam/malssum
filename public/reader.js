@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
+const APP_VERSION = '2026.09.25.2';
 const dateKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 let state;
 try { state = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* Recover without removing old records. */ }
@@ -306,3 +307,22 @@ $('plan-start').onchange=e=>{const value=e.target.value;if(!validPlanDate(value)
 
 // Request access on entry without starting dictation.
 setTimeout(()=>requestMicrophone(false),0);
+
+
+// Show the version of the reader code actually loaded, without touching records.
+async function checkAppUpdate(){
+  const button=$('check-update');button.disabled=true;
+  try{
+    const response=await fetch('./public/version.json',{cache:'no-store'});
+    if(!response.ok)throw new Error('version');
+    const release=await response.json();
+    if(typeof release.version!=='string'||!/^\d{4}\.\d{2}\.\d{2}\.\d+$/.test(release.version))throw new Error('version');
+    const current=release.version===APP_VERSION;
+    $('app-version').textContent=`적용 버전 ${APP_VERSION} · ${current?'최신 버전입니다':'새 버전이 있어요'}`;
+    $('open-update').hidden=current;
+    if(!current){const url=new URL(window.location.href);url.searchParams.set('v',release.version);$('open-update').href=url.href;}
+  }catch{$('app-version').textContent=`적용 버전 ${APP_VERSION} · 업데이트 확인 불가`;}
+  finally{button.disabled=false;}
+}
+$('app-version').textContent=`적용 버전 ${APP_VERSION}`;
+$('check-update').onclick=checkAppUpdate;
