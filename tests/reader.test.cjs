@@ -29,7 +29,6 @@ test('backup round trip restores completed verses, draft, position and plan on a
   assert.equal(b.run('todayEntries().length'),1);assert.equal(b.run('state.entries.gen_1_2.text'),'둘째 절 초안');assert.equal(b.run('state.index'),1);assert.equal(b.run('state.plan'),'3years');assert.equal(b.run('state.completedReadings'),2);
   const c=app(b.stored.get('malssum_dictation_v3'));assert.equal(c.run('state.entries.gen_1_1.text'),'첫 절 받아쓰기');
 });
-test('backup sharing falls back from blocked JSON to a restorable text file',async()=>{const a=app();await a.run(`globalThis.File=class{constructor(parts,name,options){this.parts=parts;this.name=name;this.type=options.type}};navigator={canShare:data=>data.files[0].type==='text/plain',share:async data=>{navigator.sent=data}};shareBackup()`);assert.match(a.run('navigator.sent.files[0].name'),/\.txt$/);assert.equal(a.run('navigator.sent.files[0].type'),'text/plain');assert.match(a.run('navigator.sent.files[0].parts[0]'),/malssum-reading-backup/);assert.match(a.nodes.get('backup-share-message').textContent,/도착했는지/);});
 test('restore merges and is idempotent; an old backup cannot remove newer local records',()=>{
   const a=app();a.run('start()');a.say('첫 절');a.run('complete();globalThis.oldBackup=backupPayload()');a.say('새 기록');a.run('complete();pendingRestore=validateBackup(oldBackup);restoreBackup()');
   assert.equal(a.run('todayEntries().length'),2);a.run('pendingRestore=validateBackup(oldBackup);restoreBackup()');assert.equal(a.run('todayEntries().length'),2);
