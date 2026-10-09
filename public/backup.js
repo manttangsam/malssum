@@ -8,31 +8,35 @@ function validateBackup(raw) {
   const fail = () => { throw new Error('말씀소리 백업 파일이 아니거나 내용이 손상되었어요. 원본 백업 파일을 다시 선택해 주세요.'); };
   if (!raw || raw.format !== BACKUP_FORMAT || raw.version !== 1 || !raw.state) fail();
   const s = raw.state;
+  const version=Object.hasOwn(BIBLE_VERSIONS,s.version)?s.version:'krv';
   if (s.planStart !== undefined && !validPlanDate(s.planStart)) fail();
   const book = BIBLE_BOOKS.find(b => b.id === s.book);
   if (!book || !Number.isInteger(s.chapter) || s.chapter < 1 || s.chapter > book.totalChapters || !Number.isInteger(s.index) || s.index < 0 || s.index > 175) fail();
   if (!Object.hasOwn(READING_PLANS, s.plan) || ![500,800,1000,1800,2800,4000].includes(s.pause) || !Number.isFinite(s.font) || s.font < 18 || s.font > 34) fail();
   if (s.completedReadings !== undefined && (!Number.isInteger(s.completedReadings) || s.completedReadings < 0)) fail();
   if (s.cycleComplete !== undefined && typeof s.cycleComplete !== 'boolean') fail();
-  if (!s.entries || typeof s.entries !== 'object' || Array.isArray(s.entries) || Object.keys(s.entries).length > 32000) fail();
+  if (s.completedCycles !== undefined && (!s.completedCycles || typeof s.completedCycles!=='object' || Array.isArray(s.completedCycles) || Object.entries(s.completedCycles).some(([key,value])=>!Object.hasOwn(BIBLE_VERSIONS,key)||typeof value!=='boolean'))) fail();
+  if (!s.entries || typeof s.entries !== 'object' || Array.isArray(s.entries) || Object.keys(s.entries).length > 128000) fail();
   const entries = {};
   for (const [key, value] of Object.entries(s.entries)) {
-    const match = /^([a-z0-9]+)_(\d+)_(\d+)$/.exec(key);
+    const match = /^(?:(krv|klb|hkjv|esv)_)?([a-z0-9]+)_(\d+)_(\d+)$/.exec(key);
     if (!match) fail();
-    const [,id,ch,v] = match;
+    const [,keyVersion,id,ch,v] = match;
+    const entryVersion=keyVersion||'krv';
     const b = BIBLE_BOOKS.find(b => b.id === id);
-    if (!b || +ch < 1 || +ch > b.totalChapters || +v < 1 || +v > 176 || key !== `${id}_${+ch}_${+v}`) fail();
+    if (!b || +ch < 1 || +ch > b.totalChapters || +v < 1 || +v > 176 || key !== `${entryVersion==='krv'?'':entryVersion+'_'}${id}_${+ch}_${+v}`) fail();
     if (!value || typeof value.text !== 'string' || !value.text.trim() || value.text.length > 100000 || typeof value.completed !== 'boolean') fail();
-    const e = {text:value.text, completed:value.completed};
+    const e = {text:value.text, completed:value.completed, version:entryVersion};
     if (e.completed) {
-      if (value.book !== id || value.chapter !== +ch || value.verse !== +v || typeof value.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.date)) fail();
+      if ((value.version||'krv') !== entryVersion || value.book !== id || value.chapter !== +ch || value.verse !== +v || typeof value.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.date)) fail();
       const date = new Date(`${value.date}T12:00:00Z`);
       if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0,10) !== value.date) fail();
-      Object.assign(e, {book:id, chapter:+ch, verse:+v, date:value.date});
+      Object.assign(e, {version:entryVersion, book:id, chapter:+ch, verse:+v, date:value.date});
     }
     entries[key] = e;
   }
-  return {book:s.book, chapter:s.chapter, index:s.index, plan:s.plan, pause:s.pause, font:s.font, planStart:s.planStart||dateKey(), completedReadings:s.completedReadings||0, cycleComplete:s.cycleComplete===true, entries};
+  const completedCycles=s.completedCycles||{krv:s.cycleComplete===true};
+  return {book:s.book, chapter:s.chapter, index:s.index, version, plan:s.plan, pause:s.pause, font:s.font, planStart:s.planStart||dateKey(), completedReadings:s.completedReadings||0, cycleComplete:completedCycles.krv===true, completedCycles, entries};
 }
 
 function backupPayload() {
@@ -47,7 +51,8 @@ function mergeBackup(current, incoming) {
     // Preserve completed local records and drafts; an incoming completion can finish a local draft.
     if (!entries[key] || (!entries[key].completed && e.completed)) entries[key] = e;
   }
-  return {...incoming, completedReadings:Math.max(current.completedReadings||0,incoming.completedReadings||0), cycleComplete:(current.cycleComplete||incoming.cycleComplete)&&Object.keys(entries).length>=TOTAL_BIBLE_VERSES, entries};
+  const completedCycles={};for(const version of Object.keys(BIBLE_VERSIONS))completedCycles[version]=!!(current.completedCycles?.[version]||incoming.completedCycles?.[version]);
+  return {...incoming, completedReadings:Math.max(current.completedReadings||0,incoming.completedReadings||0), cycleComplete:completedCycles.krv===true, completedCycles, entries};
 }
 function backupStats(s) {
   const values = Object.values(s.entries);
@@ -108,7 +113,7 @@ function restoreBackup() {
   state = merged;
   pendingRestore = null;
   $('backup-preview').hidden = true;
-  selectors(); render(); updateBackupInfo();
+  loadBibleVersion(state.version).then(()=>{selectors();render();updateBackupInfo();}).catch(()=>{state.version='krv';activeBible=bibleCache.get('krv');selectors();render();updateBackupInfo();});
   $('backup-message').textContent = '기록을 합쳐 복원했어요. 이 창을 닫고 읽던 곳에서 이어가세요.';
 }
 $('backup-open').onclick = () => {

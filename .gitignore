@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 .codex-remote-attachments/
+tmp/
+ESV Bible.zip
+현대인의_성경.txt
+큰글자 성경 신구약 부록 2025 최적화.pdf
 
 # Editor directories and files
 .vscode/*

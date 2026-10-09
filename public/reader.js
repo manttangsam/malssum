@@ -1,15 +1,26 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.09.26.6';
+const APP_VERSION = '2026.10.10.1';
+const BIBLE_VERSIONS={
+  krv:{label:'개역개정 4판',language:'ko',totalVerses:31102,source:'제공된 개역개정 4판 본문'},
+  klb:{label:'현대인의 성경',language:'ko',url:'./public/bibles/klb.json'},
+  hkjv:{label:'킹제임스 흠정역',language:'ko',url:'./public/bibles/hkjv.json'},
+  esv:{label:'ESV',language:'en',url:'./public/bibles/esv.json'}
+};
+const bibleCache=new Map([['krv',{chapters:CHAPTER_DATA,totalVerses:31102,label:'개역개정 4판',language:'ko'}]]);
+let activeBible=bibleCache.get('krv');
 const dateKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 let state;
 try { state = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* Recover without removing old records. */ }
 if (!state || typeof state !== 'object' || !state.entries || typeof state.entries !== 'object') state = {book:'gen',chapter:1,index:0,plan:'1year',pause:1000,font:23,entries:{}};
 if (!BIBLE_BOOKS.some(b=>b.id===state.book)) state.book='gen';
 if (!READING_PLANS[state.plan]) state.plan='1year';
+state.version=Object.hasOwn(BIBLE_VERSIONS,state.version)?state.version:'krv';
 state.completedReadings=Number.isInteger(state.completedReadings)&&state.completedReadings>=0?state.completedReadings:0;
 state.cycleComplete=state.cycleComplete===true;
+state.completedCycles=state.completedCycles&&typeof state.completedCycles==='object'?state.completedCycles:{};
+if(state.cycleComplete)state.completedCycles.krv=true;
 state.planStart = validPlanDate(state.planStart) ? state.planStart : dateKey();
 state.chapter=Math.max(1,Math.min(Number(state.chapter)||1,BIBLE_BOOKS.find(b=>b.id===state.book).totalChapters));
 state.font=Math.max(18,Math.min(34,Number(state.font)||23));
@@ -19,11 +30,21 @@ const mobileSpeech=typeof navigator!=='undefined'&&(navigator.userAgentData?.mob
 let soundActive=false, completedReplay=null;
 let microphoneGranted=false, emptyRestarts=0;
 let listening=false, recognition=null, generation=0, pauseTimer=null, restartTimer=null, interim='', starting=false;
-const verses=()=>CHAPTER_DATA[`${state.book}_${state.chapter}`] || [];
-const verseRange=(index=state.index)=>(CHAPTER_RANGES[`${state.book}_${state.chapter}`]||[]).find(([a,b])=>index+1>=a&&index+1<=b)||[index+1,index+1];
-const verseKey=()=>{const [a,b]=verseRange();for(let v=a;v<=b;v++){const k=`${state.book}_${state.chapter}_${v}`;if(!state.entries[k]?.completed)return k;}return `${state.book}_${state.chapter}_${a}`;};
+const entryKey=(book,chapter,verse,version=state.version)=>`${version==='krv'?'':version+'_'}${book}_${chapter}_${verse}`;
+const entryVersion=e=>e?.version||'krv';
+const verses=()=>activeBible.chapters[`${state.book}_${state.chapter}`] || [];
+const verseRange=(index=state.index)=>state.version==='krv'?((CHAPTER_RANGES[`${state.book}_${state.chapter}`]||[]).find(([a,b])=>index+1>=a&&index+1<=b)||[index+1,index+1]):[index+1,index+1];
+const verseKey=()=>{const [a,b]=verseRange();for(let v=a;v<=b;v++){const k=entryKey(state.book,state.chapter,v);if(!state.entries[k]?.completed)return k;}return entryKey(state.book,state.chapter,a);};
 const entry=()=>state.entries[verseKey()];
-const todayEntries=()=>Object.values(state.entries).filter(e=>e && e.completed && e.date===dateKey() && typeof e.text==='string' && e.text.trim());
+const todayEntries=()=>Object.values(state.entries).filter(e=>e && entryVersion(e)===state.version && e.completed && e.date===dateKey() && typeof e.text==='string' && e.text.trim());
+async function loadBibleVersion(version){
+  if(bibleCache.has(version)){activeBible=bibleCache.get(version);return;}
+  status('성경 본문을 불러오고 있어요','처음 한 번만 잠시 기다려 주세요.');
+  const response=await fetch(BIBLE_VERSIONS[version].url,{cache:'force-cache'});if(!response.ok)throw new Error('bible');
+  const payload=await response.json();
+  if(payload.id!==version||!payload.chapters||Object.keys(payload.chapters).length!==1189)throw new Error('bible');
+  activeBible=payload;bibleCache.set(version,payload);
+}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));}catch{$('storage-note').textContent='저장 공간이 부족해 새 기록을 저장하지 못했어요. 기록 이미지를 보관해 주세요.';$('status').textContent='기록 저장 공간을 확인해 주세요';}}
 function status(message,hint){$('status').textContent=message;$('hint').textContent=hint;}
 function validPlanDate(value){
@@ -49,7 +70,7 @@ function updateTotals(){
   $('plan-start').value=state.planStart;$('plan-start').max=dateKey();
 }
 function advanceReadingPosition(){
-  const next=verses().findIndex((_,i)=>i>state.index&&!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);
+  const next=verses().findIndex((_,i)=>i>state.index&&!state.entries[entryKey(state.book,state.chapter,i+1)]?.completed);
   if(next>=0){state.index=next;return true;}
   const b=BIBLE_BOOKS.findIndex(b=>b.id===state.book);
   if(state.chapter<BIBLE_BOOKS[b].totalChapters)state.chapter++;
@@ -57,15 +78,16 @@ function advanceReadingPosition(){
   else return false;
   state.index=0;selectors();return true;
 }
-function selectors(){ $('book').replaceChildren(...BIBLE_BOOKS.map(b=>new Option(b.name,b.id)));$('book').value=state.book;const book=BIBLE_BOOKS.find(b=>b.id===state.book);$('chapter').replaceChildren(...Array.from({length:book.totalChapters},(_,i)=>new Option(`${i+1}장`,i+1)));$('chapter').value=state.chapter;$('plan').value=state.plan;$('pause').value=state.pause;$('pause-help').textContent='문장 중간에 자주 쉬면 길게 설정해 주세요.'; }
+function selectors(){ $('translation').value=state.version;$('book').replaceChildren(...BIBLE_BOOKS.map(b=>new Option(b.name,b.id)));$('book').value=state.book;const book=BIBLE_BOOKS.find(b=>b.id===state.book);$('chapter').replaceChildren(...Array.from({length:book.totalChapters},(_,i)=>new Option(`${i+1}장`,i+1)));$('chapter').value=state.chapter;$('plan').value=state.plan;$('pause').value=state.pause;$('pause-help').textContent='문장 중간에 자주 쉬면 길게 설정해 주세요.'; }
 function render(){
   const list=verses();state.index=Math.min(state.index,Math.max(0,list.length-1));state.index=verseRange()[0]-1;document.documentElement.style.setProperty('--verse-size',`${state.font}px`);
-  $('chapter-info').textContent=list.length?`${BIBLE_BOOKS.find(b=>b.id===state.book).name} ${state.chapter}장 · ${list.length}절${CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]?' · '+CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]:''}`:'본문 준비 중';
+  $('chapter-info').textContent=list.length?`${BIBLE_VERSIONS[state.version].label} · ${BIBLE_BOOKS.find(b=>b.id===state.book).name} ${state.chapter}장 · ${list.length}절${state.version==='krv'&&CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]?' · '+CHAPTER_HEADINGS[`${state.book}_${state.chapter}`]:''}`:'본문 준비 중';
+  $('data-note').textContent=`${BIBLE_VERSIONS[state.version].label} · 구약·신약 66권 전체 본문 · ${activeBible.totalVerses.toLocaleString('ko-KR')}절`;
   $('verses').replaceChildren();
   if(!list.length){const p=document.createElement('p');p.className='empty';p.textContent='아직 이 장의 본문이 준비되지 않았어요. 창세기 1장 등 수록된 본문을 선택해 주세요.';$('verses').append(p);}
   list.forEach((text,i)=>{
     const [first,last]=verseRange(i);if(i+1!==first)return;const verseLabel=first===last?String(first):`${first}–${last}`;
-    const active=i===state.index;const e=active?entry():state.entries[`${state.book}_${state.chapter}_${i+1}`];
+    const active=i===state.index;const e=active?entry():state.entries[entryKey(state.book,state.chapter,i+1)];
     const card=document.createElement('section');card.id=`verse-${i}`;card.className=`verse ${active?'active':''} ${e?.completed?'done':''}`;
     const top=document.createElement('div');top.className='verse-top';const num=document.createElement('span');num.className='verse-num';num.textContent=e?.completed?`${verseLabel} ✓`:verseLabel;const body=document.createElement('div');body.className='verse-text';body.textContent=text;top.append(num,body);card.append(top);
     const d=document.createElement('div');d.className='dictation';d.id=`dictation-${i}`;d.hidden=!active&&!e?.text;const label=document.createElement('small');label.textContent=e?.completed?'나의 받아쓰기 · 읽음':'나의 받아쓰기';const t=document.createElement('span');t.id=`transcript-${i}`;t.textContent=e?.text||'';const partial=document.createElement('span');partial.id=`interim-${i}`;partial.className='interim';partial.textContent=active?interim:'';d.append(label,t,partial);if(active&&!e?.text&&!interim)t.textContent='읽는 목소리를 이곳에 남겨요.';card.append(d);
@@ -94,9 +116,9 @@ function complete(){
   const e=entry();if(!e?.text?.trim()||e.completed)return;
   const before=todayEntries().length;
   cancelTimer();const [first,last]=verseRange();
-  for(let v=first;v<=last;v++){const k=`${state.book}_${state.chapter}_${v}`;if(!state.entries[k]?.completed)state.entries[k]={text:e.text,completed:true,date:dateKey(),book:state.book,chapter:state.chapter,verse:v};}
-  const finishedReading=!state.cycleComplete&&overallProgress().count===TOTAL_BIBLE_VERSES;
-  if(finishedReading){state.completedReadings++;state.cycleComplete=true;}
+  for(let v=first;v<=last;v++){const k=entryKey(state.book,state.chapter,v);if(!state.entries[k]?.completed)state.entries[k]={text:e.text,completed:true,date:dateKey(),version:state.version,book:state.book,chapter:state.chapter,verse:v};}
+  const finishedReading=!state.completedCycles[state.version]&&overallProgress().count===activeBible.totalVerses;
+  if(finishedReading){state.completedReadings++;state.completedCycles[state.version]=true;if(state.version==='krv')state.cycleComplete=true;}
   state.index=last-1;
   const goal=READING_PLANS[state.plan].dailyTargetVerses;
   const reachedGoal=before<goal&&todayEntries().length>=goal;
@@ -151,7 +173,7 @@ function withoutCompletedReplay(text,key){
 }
 function openRecognition(automatic=false){
   const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;if(!Speech){listening=false;starting=false;render();status('이 브라우저에서는 받아쓰기를 지원하지 않아요','음성 인식을 지원하는 브라우저에서 열어 주세요.');return;}
-  const token=++generation;const r=new Speech();recognition=r;r.lang='ko-KR';r.continuous=true;r.interimResults=true;
+  const token=++generation;const r=new Speech();recognition=r;r.lang=BIBLE_VERSIONS[state.version].language==='en'?'en-US':'ko-KR';r.continuous=true;r.interimResults=true;
   let key=verseKey(),base=entry()?.text||'',floor=0,seen=0,segment=0,slots=[],madeProgress=false,replay=automatic;
   let freshResult=false,speechEnded=false;
   r.hasFreshResult=()=>freshResult;
@@ -187,7 +209,7 @@ function openRecognition(automatic=false){
     if(!changed)return;
     cancelTimer();interim=partial;
     if(final&&text!==(entry()?.text||''))freshResult=true;
-    if(text.trim()){madeProgress=madeProgress||text!==(entry()?.text||'');state.entries[key]={...state.entries[key],text,completed:false};}
+    if(text.trim()){madeProgress=madeProgress||text!==(entry()?.text||'');state.entries[key]={...state.entries[key],text,completed:false,version:state.version};}
     const t=$(`transcript-${state.index}`);if(t)t.textContent=text+(text&&partial?' ':'');const p=$(`interim-${state.index}`);if(p)p.textContent=partial;
     $('finish').disabled=!text.trim();save();scheduleBoundary();
   };
@@ -240,27 +262,26 @@ async function requestMicrophone(startAfterPermission=true){
     else status('마이크를 사용할 수 없어요','마이크를 사용하는 다른 앱을 닫고 다시 눌러 주세요.');
   }
 }
-function start(){if(listening||starting||!verses().length)return;if(state.cycleComplete){state.entries={};state.book='gen';state.chapter=1;state.index=0;state.planStart=dateKey();state.cycleComplete=false;selectors();save();render();}if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[`${state.book}_${state.chapter}_${i+1}`]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}completedReplay=null;emptyRestarts=0;starting=true;listening=true;render();scrollToActiveVerse();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
+function start(){if(listening||starting||!verses().length)return;if(state.completedCycles[state.version]){for(const [key,value] of Object.entries(state.entries))if(entryVersion(value)===state.version)delete state.entries[key];state.book='gen';state.chapter=1;state.index=0;state.planStart=dateKey();state.completedCycles[state.version]=false;if(state.version==='krv')state.cycleComplete=false;selectors();save();render();}if(entry()?.completed){const first=verses().findIndex((_,i)=>!state.entries[entryKey(state.book,state.chapter,i+1)]?.completed);if(first<0){if(advanceReadingPosition()){save();render();if(verses().length)start();else status('다음 장의 본문 준비 중','읽은 기록과 이어 읽을 위치는 저장되어 있어요.');}else status('마지막 본문까지 읽었어요','나의 기록을 확인해 주세요.');return;}state.index=first;}completedReplay=null;emptyRestarts=0;starting=true;listening=true;render();scrollToActiveVerse();status('마이크를 연결하고 있어요','마이크 권한 요청이 나오면 허용해 주세요.');openRecognition();}
 function navigate(delta){stop();const b=BIBLE_BOOKS.findIndex(b=>b.id===state.book);let n=state.chapter+delta;if(n>BIBLE_BOOKS[b].totalChapters&&b<BIBLE_BOOKS.length-1){state.book=BIBLE_BOOKS[b+1].id;n=1;}else if(n<1&&b>0){state.book=BIBLE_BOOKS[b-1].id;n=BIBLE_BOOKS[b-1].totalChapters;}state.chapter=n;state.index=0;selectors();save();render();}
 function ranges(){const groups=new Map();todayEntries().forEach(e=>{const k=`${BIBLE_BOOKS.find(b=>b.id===e.book)?.name||e.book} ${e.chapter}장`;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e.verse);});return Array.from(groups,([k,v])=>`${k} ${v.sort((a,b)=>a-b).join(', ')}절`).join(' · ');}
-// 제공된 개역개정 4판 파일의 절 번호 기준 (없음 표기 포함).
 const TOTAL_BIBLE_VERSES = 31102;
 function overallProgress(){
-  const ids=new Set(Object.values(state.entries).filter(e=>e?.completed && typeof e.text==='string' && e.text.trim() && BIBLE_BOOKS.some(b=>b.id===e.book) && Number.isInteger(e.chapter) && Number.isInteger(e.verse)).map(e=>`${e.book}_${e.chapter}_${e.verse}`));
+  const ids=new Set(Object.values(state.entries).filter(e=>entryVersion(e)===state.version && e?.completed && typeof e.text==='string' && e.text.trim() && BIBLE_BOOKS.some(b=>b.id===e.book) && Number.isInteger(e.chapter) && Number.isInteger(e.verse)).map(e=>`${e.book}_${e.chapter}_${e.verse}`));
   const count=ids.size;
-  const percent=Math.min(100,count/TOTAL_BIBLE_VERSES*100);
+  const percent=Math.min(100,count/activeBible.totalVerses*100);
   return {count,percent,label:count>0&&percent<0.01?'< 0.01%':`${percent.toFixed(2)}%`};
 }
 let shareSnapshot=null, shareFile=null, shareRevision=0;
-function captureShare(){return {date:dateKey(),today:todayEntries().length,ranges:ranges()||'첫 번째 낭독을 기다리고 있어요.',overall:overallProgress(),completedReadings:state.completedReadings};}
-function shareText(snapshot){return `[말씀소리 · 나의 낭독 기록]\n${snapshot.date}\n오늘 읽은 말씀: ${snapshot.today}절\n${snapshot.ranges}\n완독 누적: ${snapshot.completedReadings}독\n성경 전체 진도: ${snapshot.overall.label}\n누적 ${snapshot.overall.count.toLocaleString('ko-KR')} / ${TOTAL_BIBLE_VERSES.toLocaleString('ko-KR')}절 (개역개정 기준)\n나의 속도로, 매일 한 걸음.`;}
+function captureShare(){return {date:dateKey(),today:todayEntries().length,ranges:ranges()||'첫 번째 낭독을 기다리고 있어요.',overall:overallProgress(),completedReadings:state.completedReadings,version:BIBLE_VERSIONS[state.version].label,totalVerses:activeBible.totalVerses};}
+function shareText(snapshot){return `[말씀소리 · 나의 낭독 기록]\n${snapshot.date}\n성경 번역: ${snapshot.version}\n오늘 읽은 말씀: ${snapshot.today}절\n${snapshot.ranges}\n완독 누적: ${snapshot.completedReadings}독\n성경 전체 진도: ${snapshot.overall.label}\n누적 ${snapshot.overall.count.toLocaleString('ko-KR')} / ${snapshot.totalVerses.toLocaleString('ko-KR')}절\n나의 속도로, 매일 한 걸음.`;}
 function share(){
   updateTotals();shareSnapshot=captureShare();shareFile=null;const revision=++shareRevision;
   const s=shareSnapshot;
   $('share-date').textContent=s.date.replaceAll('-','. ');$('share-count').textContent=s.today;$('share-ranges').textContent=s.ranges;
-  $('share-percent').textContent=s.overall.label;$('share-progress').max=TOTAL_BIBLE_VERSES;$('share-progress').value=s.overall.count;
+  $('share-percent').textContent=s.overall.label;$('share-progress').max=s.totalVerses;$('share-progress').value=s.overall.count;
   $('share-completions').textContent=`완독 누적 ${s.completedReadings.toLocaleString('ko-KR')}독`;
-  $('share-total').textContent=`누적 ${s.overall.count.toLocaleString('ko-KR')} / ${TOTAL_BIBLE_VERSES.toLocaleString('ko-KR')}절`;
+  $('share-total').textContent=`${s.version} · 누적 ${s.overall.count.toLocaleString('ko-KR')} / ${s.totalVerses.toLocaleString('ko-KR')}절`;
   $('share-message').textContent='';$('share-copy-text').hidden=true;$('share-dialog').showModal();
   // Prepare before the user's share tap, preserving Web Share's user activation.
   createShareBlob(s).then(blob=>{if(revision===shareRevision && typeof File!=='undefined')shareFile=new File([blob],`말씀소리-${s.date}.png`,{type:'image/png'});}).catch(()=>{});
@@ -280,8 +301,8 @@ async function createShareBlob(s){
   ctx.font='26px sans-serif';lines.forEach((l,i)=>ctx.fillText(l,90,815+i*45));
   ctx.font='32px sans-serif';ctx.fillText(`성경 전체 진도  ${s.overall.label}`,90,progressY+45);
   ctx.fillStyle='#d4dfce';ctx.fillRect(90,progressY+75,900,12);ctx.fillStyle='#284e43';ctx.fillRect(90,progressY+75,900*s.overall.percent/100,12);
-  ctx.font='26px sans-serif';ctx.fillText(`완독 누적 ${s.completedReadings.toLocaleString('ko-KR')}독`,90,progressY+135);
-  ctx.fillText(`누적 ${s.overall.count.toLocaleString('ko-KR')} / 31,102절 · 개역개정 기준`,90,progressY+180);
+  ctx.font='26px sans-serif';ctx.fillText(`${s.version} · 완독 누적 ${s.completedReadings.toLocaleString('ko-KR')}독`,90,progressY+135);
+  ctx.fillText(`누적 ${s.overall.count.toLocaleString('ko-KR')} / ${s.totalVerses.toLocaleString('ko-KR')}절`,90,progressY+180);
   ctx.fillText('나의 속도로, 매일 한 걸음.',90,canvas.height-90);
   return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('image')),'image/png'));
 }
@@ -305,19 +326,17 @@ async function shareToKakao(){
   }catch(error){$('share-message').textContent=error.name==='AbortError'?'공유를 취소했어요.':'공유창을 열지 못했어요. 이미지 저장 또는 공유 문구 복사를 이용해 주세요.';}
 }
 $('mic').onclick=()=>listening||starting?stop():requestMicrophone();$('finish').onclick=()=>complete();
+$('translation').onchange=async e=>{const previous=state.version;stop();state.version=e.target.value;try{await loadBibleVersion(state.version);state.book='gen';state.chapter=1;state.index=0;selectors();save();render();scrollToActiveVerse();status(`${BIBLE_VERSIONS[state.version].label}을 불러왔어요`,'창세기 1장부터 읽거나 책과 장을 선택해 주세요.');}catch{state.version=previous;activeBible=bibleCache.get(previous);selectors();render();status('성경 본문을 불러오지 못했어요','인터넷 연결을 확인하고 다시 선택해 주세요.');}};
 $('book').onchange=e=>{stop();state.book=e.target.value;state.chapter=1;state.index=0;selectors();save();render();};
 $('chapter').onchange=e=>{stop();state.chapter=Number(e.target.value);state.index=0;save();render();};
 $('plan').onchange=e=>{stop();state.plan=e.target.value;save();updateTotals();};$('pause').onchange=e=>{state.pause=Number(e.target.value);save();scheduleBoundary();};
 $('smaller').onclick=()=>{state.font=Math.max(18,state.font-2);save();render();};$('larger').onclick=()=>{state.font=Math.min(34,state.font+2);save();render();};
 $('previous').onclick=()=>navigate(-1);$('next').onclick=()=>navigate(1);$('share-open').onclick=share;$('share-close').onclick=()=>$('share-dialog').close();$('download').onclick=download;$('kakao-share').onclick=shareToKakao;$('copy-share').onclick=copyShare;
 window.addEventListener('pagehide',stop);document.addEventListener('visibilitychange',()=>{if(document.hidden&&(listening||starting))stop();else updateTotals();});
-selectors();render();save();
+function ready(){selectors();render();save();setTimeout(()=>requestMicrophone(false),0);}
+if(state.version==='krv')ready();else loadBibleVersion(state.version).then(ready).catch(()=>{state.version='krv';activeBible=bibleCache.get('krv');ready();status('저장된 성경 본문을 불러오지 못했어요','개역개정 4판으로 열었습니다. 인터넷 연결을 확인해 주세요.');});
 $('daily-share').onclick=share;
 $('plan-start').onchange=e=>{const value=e.target.value;if(!validPlanDate(value)||value>dateKey()){e.target.value=state.planStart;return;}state.planStart=value;save();updateTotals();};
-
-// Request access on entry without starting dictation.
-setTimeout(()=>requestMicrophone(false),0);
-
 
 // Show the version of the reader code actually loaded, without touching records.
 async function checkAppUpdate(){
