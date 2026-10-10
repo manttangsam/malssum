@@ -16,6 +16,7 @@ function validateBackup(raw) {
   if (s.completedReadings !== undefined && (!Number.isInteger(s.completedReadings) || s.completedReadings < 0)) fail();
   if (s.cycleComplete !== undefined && typeof s.cycleComplete !== 'boolean') fail();
   if (s.completedCycles !== undefined && (!s.completedCycles || typeof s.completedCycles!=='object' || Array.isArray(s.completedCycles) || Object.entries(s.completedCycles).some(([key,value])=>!Object.hasOwn(BIBLE_VERSIONS,key)||typeof value!=='boolean'))) fail();
+  if (s.versionPositions !== undefined && (!s.versionPositions || typeof s.versionPositions!=='object' || Array.isArray(s.versionPositions) || Object.entries(s.versionPositions).some(([key,position])=>!Object.hasOwn(BIBLE_VERSIONS,key)||!validPosition(position)))) fail();
   if (!s.entries || typeof s.entries !== 'object' || Array.isArray(s.entries) || Object.keys(s.entries).length > 128000) fail();
   const entries = {};
   for (const [key, value] of Object.entries(s.entries)) {
@@ -36,7 +37,8 @@ function validateBackup(raw) {
     entries[key] = e;
   }
   const completedCycles=s.completedCycles||{krv:s.cycleComplete===true};
-  return {book:s.book, chapter:s.chapter, index:s.index, version, plan:s.plan, pause:s.pause, font:s.font, planStart:s.planStart||dateKey(), completedReadings:s.completedReadings||0, cycleComplete:completedCycles.krv===true, completedCycles, entries};
+  const versionPositions=s.versionPositions||{[version]:{book:s.book,chapter:s.chapter,index:s.index}};
+  return {book:s.book, chapter:s.chapter, index:s.index, version, versionPositions, plan:s.plan, pause:s.pause, font:s.font, planStart:s.planStart||dateKey(), completedReadings:s.completedReadings||0, cycleComplete:completedCycles.krv===true, completedCycles, entries};
 }
 
 function backupPayload() {
@@ -52,7 +54,8 @@ function mergeBackup(current, incoming) {
     if (!entries[key] || (!entries[key].completed && e.completed)) entries[key] = e;
   }
   const completedCycles={};for(const version of Object.keys(BIBLE_VERSIONS))completedCycles[version]=!!(current.completedCycles?.[version]||incoming.completedCycles?.[version]);
-  return {...incoming, completedReadings:Math.max(current.completedReadings||0,incoming.completedReadings||0), cycleComplete:completedCycles.krv===true, completedCycles, entries};
+  const versionPositions={...(current.versionPositions||{}),...(incoming.versionPositions||{})};
+  return {...incoming, versionPositions, completedReadings:Math.max(current.completedReadings||0,incoming.completedReadings||0), cycleComplete:completedCycles.krv===true, completedCycles, entries};
 }
 function backupStats(s) {
   const values = Object.values(s.entries);
