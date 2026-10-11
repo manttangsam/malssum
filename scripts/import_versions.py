@@ -5,6 +5,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 import time
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -75,6 +76,34 @@ def import_esv():
                 chapters[key]=[verse_map[v] for v in range(1,max(verse_map)+1)]
     write_version('esv','ESV','en',chapters,'ESV Bible.zip')
 
+def import_easy():
+    chapters={}
+    archive_path=next(path for path in ROOT.glob('*.zip') if path.name != 'ESV Bible.zip')
+    fallback=json.loads((OUT/'klb.json').read_text(encoding='utf-8'))['chapters']
+    with zipfile.ZipFile(archive_path) as archive:
+        # The archive stores all 39 Old Testament files followed by all 27 New
+        # Testament files; book numbers restart inside each folder.
+        names=archive.namelist()
+        if len(names)!=66:
+            raise ValueError(f"Easy Bible: expected 66 books, got {len(names)}")
+        for book_index,name in enumerate(names):
+            text=archive.read(name).decode('cp949')
+            values={}
+            for raw in text.splitlines():
+                match=re.match(r'^\S+?(\d+):(\d+)(?:\s+(.*))?$',raw.strip())
+                if match:
+                    chapter,verse,body=match.groups()
+                    values[(int(chapter),int(verse))]=(body or '').strip()
+            for chapter in range(1,CHAPTER_COUNTS[book_index]+1):
+                verses={verse:body for (ch,verse),body in values.items() if ch==chapter}
+                if not verses or sorted(verses)!=list(range(1,max(verses)+1)):
+                    raise ValueError(f"Easy Bible verses missing: {BOOK_IDS[book_index]} {chapter}")
+                for verse,body in verses.items():
+                    if not body:
+                        verses[verse]=fallback[f'{BOOK_IDS[book_index]}_{chapter}'][verse-1]
+                chapters[f'{BOOK_IDS[book_index]}_{chapter}']=[verses[verse] for verse in range(1,max(verses)+1)]
+    write_version('easy','쉬운성경','ko',chapters,f'{archive_path.name} / 빈 절 8개는 현대인의 성경으로 보완')
+
 def strip_tags(value):
     return html.unescape(re.sub(r"<[^>]+>","",value)).replace('\xa0',' ').strip()
 
@@ -120,6 +149,7 @@ def import_kjv():
     write_version('hkjv','킹제임스 흠정역','ko',ordered,'큰글자 성경 신구약 부록 2025 최적화.pdf / new.keepbible.com')
 
 if __name__ == '__main__':
-    import_modern()
-    import_esv()
-    import_kjv()
+    jobs={'modern':import_modern,'esv':import_esv,'easy':import_easy,'hkjv':import_kjv}
+    selected=sys.argv[1:] or list(jobs)
+    for job in selected:
+        jobs[job]()

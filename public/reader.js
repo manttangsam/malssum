@@ -1,10 +1,11 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.10.10.3';
+const APP_VERSION = '2026.10.11.1';
 const BIBLE_VERSIONS={
   krv:{label:'개역개정 4판',language:'ko',totalVerses:31102,source:'제공된 개역개정 4판 본문'},
   klb:{label:'현대인의 성경',language:'ko',url:'./public/bibles/klb.json'},
+  easy:{label:'쉬운성경',language:'ko',url:'./public/bibles/easy.json'},
   hkjv:{label:'킹제임스 흠정역',language:'ko',url:'./public/bibles/hkjv.json'},
   esv:{label:'ESV',language:'en',url:'./public/bibles/esv.json'}
 };
