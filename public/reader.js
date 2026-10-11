@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.10.11.1';
+const APP_VERSION = '2026.10.11.2';
 const BIBLE_VERSIONS={
   krv:{label:'개역개정 4판',language:'ko',totalVerses:31102,source:'제공된 개역개정 4판 본문'},
   klb:{label:'현대인의 성경',language:'ko',url:'./public/bibles/klb.json'},
@@ -151,6 +151,18 @@ function mergeGrowingPhrase(previous,next){
   if(next.startsWith(previous+' '))return next;
   return previous+' '+next;
 }
+function collapseCumulativeGroups(groups){
+  const collapsed=[];
+  for(const group of groups){
+    const last=collapsed[collapsed.length-1];
+    const previous=last&&speechIdentity(last.text),next=speechIdentity(group.text);
+    // Android can open a new speech segment for every longer revision. Replace
+    // only strict extensions; an exact repeated phrase remains intentional.
+    if(last&&next.length>previous.length&&next.startsWith(previous))last.text=group.text;
+    else collapsed.push({...group});
+  }
+  return collapsed;
+}
 function mergeRestartReplay(base,text){
   if(!base||!text)return base||text;
   if(text===base||text.startsWith(base+' '))return text;
@@ -208,7 +220,7 @@ function openRecognition(automatic=false){
       if(last&&last.segment===slot.segment)last.text=mergeGrowingPhrase(last.text,slot.text);
       else groups.push({segment:slot.segment,text:slot.text});
     }
-    const rawFinal=groups.map(g=>g.text).filter(Boolean).join(' ');
+    const rawFinal=collapseCumulativeGroups(groups).map(g=>g.text).filter(Boolean).join(' ');
     const final=withoutCompletedReplay(rawFinal,key);
     partial=withoutCompletedReplay(partial,key);
     const text=replay?mergeRestartReplay(base,final):[base,final].filter(Boolean).join(' ');
