@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.10.11.2';
+const APP_VERSION = '2026.10.15.1';
 const BIBLE_VERSIONS={
   krv:{label:'개역개정 4판',language:'ko',totalVerses:31102,source:'제공된 개역개정 4판 본문'},
   klb:{label:'현대인의 성경',language:'ko',url:'./public/bibles/klb.json'},
@@ -147,8 +147,12 @@ function complete(){
 // Fold only cumulative prefixes within one speech segment, not repeated words inside text.
 function mergeGrowingPhrase(previous,next){
   if(!previous)return next;if(!next)return previous;
-  if(next===previous||previous.startsWith(next+' '))return previous;
-  if(next.startsWith(previous+' '))return next;
+  const old=speechIdentity(previous),fresh=speechIdentity(next);
+  if(old===fresh||old.startsWith(fresh))return previous;
+  if(fresh.startsWith(old))return next;
+  // A growing hypothesis can also revise a number or particle near its end.
+  let shared=0;while(shared<Math.min(old.length,fresh.length)&&old[shared]===fresh[shared])shared++;
+  if(shared>=8&&shared>=Math.min(old.length,fresh.length)*0.6)return next;
   return previous+' '+next;
 }
 function collapseCumulativeGroups(groups){
@@ -165,8 +169,9 @@ function collapseCumulativeGroups(groups){
 }
 function mergeRestartReplay(base,text){
   if(!base||!text)return base||text;
-  if(text===base||text.startsWith(base+' '))return text;
-  if(base.startsWith(text+' '))return base;
+  const oldIdentity=speechIdentity(base),freshIdentity=speechIdentity(text);
+  if(freshIdentity===oldIdentity||freshIdentity.startsWith(oldIdentity))return text;
+  if(oldIdentity.startsWith(freshIdentity))return base;
   const old=base.split(/\s+/),fresh=text.split(/\s+/);
   for(let n=Math.min(old.length,fresh.length);n>=2;n--){
     if(old.slice(-n).join(' ')===fresh.slice(0,n).join(' '))return [...old,...fresh.slice(n)].join(' ');
