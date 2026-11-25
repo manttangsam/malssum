@@ -11,3 +11,13 @@
 .how .pause-help{display:block;margin-top:8px}
 
 .version-bar{max-width:1260px;margin:0 auto;padding:8px 44px;display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;font-size:11px;color:var(--muted)}.version-bar button{font-size:11px;padding:6px 10px;min-height:36px;border:1px solid var(--line);background:#fff}.version-bar a{color:var(--green)}.version-bar a[hidden]{display:none}@media(max-width:850px){.version-bar{padding:6px 20px}}
+
+/* Keep the current verse readable inside the space above the microphone dock. */
+.verse.active .dictation{max-height:min(18dvh,110px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.verse.active .verse-text{min-width:0}
+@media(max-width:850px){
+  .verse.active{padding:16px 10px}
+  .verse.active .verse-top{gap:10px}
+  .verse.active .verse-text{line-height:1.7}
+  .verse.active .dictation{margin-left:28px;margin-top:10px;padding-top:8px}
+}
