@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.11.26.1';
+const APP_VERSION = '2026.11.26.2';
 const BIBLE_VERSIONS={
   krv:{label:'개역개정 4판',language:'ko',totalVerses:31102,source:'제공된 개역개정 4판 본문'},
   klb:{label:'현대인의 성경',language:'ko',url:'./public/bibles/klb.json'},
@@ -203,8 +203,8 @@ function openRecognition(automatic=false){
   let freshResult=false,speechEnded=false;
   let endFallback=null;
   r.cancelEndFallback=()=>{clearTimeout(endFallback);endFallback=null;};
-  // Some Android engines never emit speechend/soundend. Wait longer than
-  // the normal pause after a final result; every result or sound start cancels it.
+  // Some Android engines never emit speechend/soundend. Use
+  // the selected pause after a final result; every result or sound start cancels it.
   const waitForMissingEnd=()=>{
     r.cancelEndFallback();
     if(!soundActive||!freshResult||interim)return;
@@ -213,7 +213,7 @@ function openRecognition(automatic=false){
       endFallback=null;
       if(token!==generation||!listening||verseKey()!==expectedKey||!freshResult||interim||entry()?.text!==expectedText)return;
       soundActive=false;complete();
-    },Math.max(4000,state.pause));
+    },state.pause);
   };
   r.hasFreshResult=()=>freshResult;
   r.moveToVerse=()=>{r.cancelEndFallback();key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;freshResult=false;speechEnded=false;};
