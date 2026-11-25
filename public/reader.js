@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const KEY = 'malssum_dictation_v3';
-const APP_VERSION = '2026.10.15.1';
+const APP_VERSION = '2026.11.26.1';
 const BIBLE_VERSIONS={
   krv:{label:'개역개정 4판',language:'ko',totalVerses:31102,source:'제공된 개역개정 4판 본문'},
   klb:{label:'현대인의 성경',language:'ko',url:'./public/bibles/klb.json'},
@@ -107,7 +107,7 @@ function render(){
   const b=BIBLE_BOOKS.findIndex(b=>b.id===state.book);$('previous').disabled=b===0&&state.chapter===1;$('next').disabled=b===BIBLE_BOOKS.length-1&&state.chapter===BIBLE_BOOKS[b].totalChapters;
   updateTotals();
 }
-function cancelTimer(){clearTimeout(pauseTimer);pauseTimer=null;}
+function cancelTimer(){clearTimeout(pauseTimer);pauseTimer=null;recognition?.cancelEndFallback?.();}
 function scrollToActiveVerse(){
   $(`verse-${state.index}`)?.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
 }
@@ -201,14 +201,29 @@ function openRecognition(automatic=false){
   const token=++generation;const r=new Speech();recognition=r;r.lang=BIBLE_VERSIONS[state.version].language==='en'?'en-US':'ko-KR';r.continuous=true;r.interimResults=true;
   let key=verseKey(),base=entry()?.text||'',floor=0,seen=0,segment=0,slots=[],madeProgress=false,replay=automatic;
   let freshResult=false,speechEnded=false;
+  let endFallback=null;
+  r.cancelEndFallback=()=>{clearTimeout(endFallback);endFallback=null;};
+  // Some Android engines never emit speechend/soundend. Wait longer than
+  // the normal pause after a final result; every result or sound start cancels it.
+  const waitForMissingEnd=()=>{
+    r.cancelEndFallback();
+    if(!soundActive||!freshResult||interim)return;
+    const expectedKey=key,expectedText=entry()?.text;
+    endFallback=setTimeout(()=>{
+      endFallback=null;
+      if(token!==generation||!listening||verseKey()!==expectedKey||!freshResult||interim||entry()?.text!==expectedText)return;
+      soundActive=false;complete();
+    },Math.max(4000,state.pause));
+  };
   r.hasFreshResult=()=>freshResult;
-  r.moveToVerse=()=>{key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;freshResult=false;speechEnded=false;};
+  r.moveToVerse=()=>{r.cancelEndFallback();key=verseKey();base=entry()?.text||'';floor=seen;segment++;replay=false;freshResult=false;speechEnded=false;};
   r.onstart=()=>{if(token!==generation)return;starting=false;scrollToActiveVerse();status(`${state.index+1}절을 듣고 있어요`,'단어가 달라도 괜찮아요. 한 절 뒤에 잠시 쉬어 주세요.');};
   r.onsoundstart=()=>{if(token===generation){soundActive=true;speechEnded=false;cancelTimer();}};
   r.onspeechstart=()=>{if(token===generation){segment++;soundActive=true;speechEnded=false;cancelTimer();}};
   r.onsoundend=r.onspeechend=()=>{if(token===generation){soundActive=false;speechEnded=true;scheduleBoundary();}};
   r.onresult=event=>{
     if(token!==generation||!listening||key!==verseKey())return;
+    r.cancelEndFallback();
     const from=Math.max(floor,event.resultIndex||0);
     seen=event.results.length;
     slots.length=seen;
@@ -231,12 +246,12 @@ function openRecognition(automatic=false){
     const text=replay?mergeRestartReplay(base,final):[base,final].filter(Boolean).join(' ');
     const changed=text!==(entry()?.text||'')||partial!==interim;
     // Old/cumulative events must not reset silence timers or spill into the next verse.
-    if(!changed)return;
+    if(!changed){waitForMissingEnd();return;}
     cancelTimer();interim=partial;
     if(final&&text!==(entry()?.text||''))freshResult=true;
     if(text.trim()){madeProgress=madeProgress||text!==(entry()?.text||'');state.entries[key]={...state.entries[key],text,completed:false,version:state.version};}
     const t=$(`transcript-${state.index}`);if(t)t.textContent=text+(text&&partial?' ':'');const p=$(`interim-${state.index}`);if(p)p.textContent=partial;
-    $('finish').disabled=!text.trim();save();scheduleBoundary();
+    $('finish').disabled=!text.trim();save();scheduleBoundary();waitForMissingEnd();
   };
   r.onerror=event=>{if(token!==generation)return;if(event.error==='no-speech')return;stop();status(event.error==='not-allowed'?'마이크 사용을 허용해 주세요':'받아쓰기가 잠시 멈췄어요',event.error==='not-allowed'?'주소창의 사이트 설정에서 마이크를 허용한 뒤 다시 시작해 주세요.':'연결과 마이크를 확인한 뒤 다시 시작해 주세요. 저장된 내용은 유지됩니다.');};
   r.onend=()=>{
